@@ -5,11 +5,13 @@ import { saveApiKeyRpc } from "./shared/settings";
 import { saveApiKey } from "./server/settings";
 import { getIssueDetail } from "./server/issueDetail";
 import { issueDetailRpc } from "./shared/issueDetail";
+import { listMyIssues } from "./server/myIssues";
+import { myIssuesRpc } from "./shared/myIssues";
 
 export default function contribute(server: PluginServerContext) {
   server.handle(searchIssuesRpc, searchIssues);
   server.handle(saveApiKeyRpc, saveApiKey);
-  // TODO(issue 3): server.handle(myIssuesRpc, listMyIssues);
+  server.handle(myIssuesRpc, listMyIssues);
   server.handle(issueDetailRpc, getIssueDetail);
   return () => {};
 }
