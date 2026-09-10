@@ -1,6 +1,7 @@
 import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { registerAttachments } from "./client/attachments";
 import { LinearSettings } from "./client/settings";
+import { registerIssuePanel } from "./client/panel/IssueDetailPanel";
 
 export default function contribute(client: PluginClientContext) {
   const cleanups: Array<() => void> = [
@@ -12,7 +13,7 @@ export default function contribute(client: PluginClientContext) {
       Component: LinearSettings,
     }),
     // TODO(issue 3): registerMyIssues(client),
-    // TODO(issue 4): registerIssuePanel(client),
+    registerIssuePanel(client),
   ];
   return () => cleanups.forEach((fn) => fn());
 }
