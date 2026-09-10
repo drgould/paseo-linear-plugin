@@ -130,8 +130,6 @@ function throwGraphqlErrors(errors: Array<{ message: string }> | undefined): voi
 }
 
 export interface LinearClient {
-  findExact(identifier: string): Promise<z.infer<typeof LinearIssueSchema>[]>;
-  searchTitles(query: string): Promise<z.infer<typeof LinearIssueSchema>[]>;
   search(query: string): Promise<z.infer<typeof LinearIssueSchema>[]>;
   myIssues(): Promise<z.infer<typeof LinearIssueSchema>[]>;
   getIssue(id: string): Promise<z.infer<typeof LinearIssueSchema> | null>;
@@ -186,8 +184,6 @@ export function createLinearClient(options: LinearClientOptions): LinearClient {
   }
 
   return {
-    findExact,
-    searchTitles,
     async search(query: string) {
       const normalized = query.trim();
       if (LINEAR_IDENTIFIER.test(normalized)) {
