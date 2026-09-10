@@ -7,9 +7,14 @@ import { myIssuesRpc } from "../../shared/myIssues";
 import type { IssueSummary } from "../../shared/types";
 import { type LinearProject, resolveProjectsForIssue, startWorkspaceForIssue } from "./createWorkspace";
 
+function describeError(caught: unknown): string {
+  return caught instanceof Error ? caught.message : "Could not start workspace.";
+}
+
 type PickerState =
   | { kind: "empty"; issueId: string }
   | { kind: "choose"; issueId: string; projects: LinearProject[] }
+  | { kind: "error"; issueId: string; message: string }
   | null;
 
 export function MyIssuesSurface({ theme, layout }: PluginSurfaceProps) {
@@ -75,6 +80,8 @@ export function MyIssuesSurface({ theme, layout }: PluginSurfaceProps) {
         return;
       }
       setPicker({ kind: "choose", issueId: issue.id, projects });
+    } catch (caught) {
+      setPicker({ kind: "error", issueId: issue.id, message: describeError(caught) });
     } finally {
       setStartingId(null);
     }
@@ -85,6 +92,8 @@ export function MyIssuesSurface({ theme, layout }: PluginSurfaceProps) {
     try {
       await startWorkspaceForIssue(paseo, project, issue);
       setPicker(null);
+    } catch (caught) {
+      setPicker({ kind: "error", issueId: issue.id, message: describeError(caught) });
     } finally {
       setStartingId(null);
     }
@@ -112,6 +121,9 @@ export function MyIssuesSurface({ theme, layout }: PluginSurfaceProps) {
           </Pressable>
           {picker?.issueId === issue.id && picker.kind === "empty" ? (
             <Text style={styles.message}>No projects available to start a workspace.</Text>
+          ) : null}
+          {picker?.issueId === issue.id && picker.kind === "error" ? (
+            <Text style={styles.message}>{picker.message}</Text>
           ) : null}
           {picker?.issueId === issue.id && picker.kind === "choose" ? (
             <View style={styles.pickerRow}>

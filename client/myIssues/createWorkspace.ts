@@ -14,11 +14,21 @@ export async function resolveProjectsForIssue(paseo: Paseo): Promise<LinearProje
   return projects;
 }
 
+async function resolveAvailableProvider(paseo: Paseo): Promise<string> {
+  const { providers } = await paseo.providers.listAvailable();
+  const available = providers.find((entry) => entry.available);
+  if (!available) {
+    throw new Error("No Paseo provider is configured. Add one in Settings → Providers.");
+  }
+  return available.provider;
+}
+
 export async function startWorkspaceForIssue(
   paseo: Paseo,
   project: LinearProject,
   issue: IssueSummary,
 ): Promise<void> {
+  const provider = await resolveAvailableProvider(paseo);
   const workspace = await paseo.workspaces.create({
     title: `${issue.identifier}: ${issue.title}`,
     source: {
@@ -29,7 +39,7 @@ export async function startWorkspaceForIssue(
     },
   });
   await workspace.agents.create({
-    config: { provider: "codex/gpt-5.5" },
+    config: { provider },
     prompt: issue.text,
     labels: { linearIssueId: issue.id },
   });
