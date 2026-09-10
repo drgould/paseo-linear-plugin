@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { type IssueDetail, type IssueSummary, LinearIssueSchema } from "../shared/types";
+import { type IssueDetail, type IssueSummary, LinearIssueSchema, PR_STATE_VALUES, type PrState } from "../shared/types";
 
 const LinearGraphqlErrorSchema = z.object({ message: z.string() }).passthrough();
 const ExactIssueResponseSchema = z.object({
@@ -29,10 +29,11 @@ const ISSUE_FIELDS = `
   url
   branchName
   priorityLabel
-  state { name }
+  state { name type }
   assignee { name }
   project { name }
   labels { nodes { name } }
+  attachments { nodes { sourceType metadata } }
 `;
 
 const EXACT_ISSUE_QUERY = `
@@ -52,7 +53,7 @@ const SEARCH_ISSUES_QUERY = `
 const MY_ISSUES_QUERY = `
   query PaseoLinearMyIssues {
     viewer {
-      assignedIssues(filter: { state: { type: { neq: "completed" } } }, orderBy: updatedAt) {
+      assignedIssues(filter: { state: { type: { nin: ["completed", "canceled", "duplicate"] } } }, orderBy: updatedAt) {
         nodes { ${ISSUE_FIELDS} }
       }
     }
@@ -68,11 +69,35 @@ export class LinearApiError extends Error {
   }
 }
 
-function issueSubtitle(issue: z.infer<typeof LinearIssueSchema>): string | undefined {
-  const parts = [issue.state.name, issue.assignee?.name].filter(
-    (part): part is string => typeof part === "string" && part.length > 0,
-  );
-  return parts.length > 0 ? parts.join(" · ") : undefined;
+const STATUS_GLYPH: Record<string, string> = {
+  backlog: "○",
+  unstarted: "◔",
+  started: "◐",
+  completed: "●",
+  canceled: "✕",
+  duplicate: "⧉",
+};
+
+function issueStatusLabel(issue: z.infer<typeof LinearIssueSchema>): string | undefined {
+  if (!issue.state.name) return undefined;
+  return `${STATUS_GLYPH[issue.state.type] ?? "•"} ${issue.state.name}`;
+}
+
+/**
+ * Reads the linked PR/MR straight off Linear's own attachment metadata (populated by its
+ * GitHub/GitLab/Bitbucket integrations) instead of shelling out and guessing by branch name.
+ * Skips commit-link attachments (e.g. "githubCommit"); trusts `metadata.status` already
+ * being one of draft/open/merged/closed, which is what Linear's GitHub integration sends.
+ */
+function toIssuePr(issue: z.infer<typeof LinearIssueSchema>): IssueSummary["pr"] {
+  for (const attachment of issue.attachments.nodes) {
+    if (attachment.sourceType?.toLowerCase().endsWith("commit")) continue;
+    const { number, url, status } = attachment.metadata;
+    if (typeof number === "number" && typeof url === "string" && typeof status === "string" && PR_STATE_VALUES.includes(status)) {
+      return { number, url, state: status as PrState };
+    }
+  }
+  return undefined;
 }
 
 function issueText(issue: z.infer<typeof LinearIssueSchema>): string {
@@ -91,16 +116,18 @@ function issueText(issue: z.infer<typeof LinearIssueSchema>): string {
 }
 
 export function toIssueSummary(issue: z.infer<typeof LinearIssueSchema>): IssueSummary {
-  const subtitle = issueSubtitle(issue);
+  const pr = toIssuePr(issue);
   return {
     id: issue.id,
     identifier: issue.identifier,
     title: issue.title,
-    ...(subtitle ? { subtitle } : {}),
+    subtitle: issueStatusLabel(issue),
+    status: issue.state.name,
     url: issue.url,
     text: issueText(issue),
     resourceType: "issue",
     branchName: issue.branchName,
+    ...(pr ? { pr } : {}),
   };
 }
 

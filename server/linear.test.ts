@@ -12,10 +12,11 @@ const issue: LinearIssue = {
   url: "https://linear.app/acme/issue/ENG-123/plugin-attachments",
   branchName: "derek/eng-123-plugin-attachments",
   priorityLabel: "High",
-  state: { name: "In Progress" },
+  state: { name: "In Progress", type: "started" },
   assignee: { name: "Mohamed" },
   project: { name: "Paseo" },
   labels: { nodes: [{ name: "Feature" }] },
+  attachments: { nodes: [] },
 };
 
 interface CapturedRequest {
@@ -142,7 +143,8 @@ describe("toIssueSummary", () => {
       id: "issue-uuid",
       identifier: "ENG-123",
       title: "Plugin attachments",
-      subtitle: "In Progress · Mohamed",
+      subtitle: "◐ In Progress",
+      status: "In Progress",
       url: issue.url,
       resourceType: "issue",
       branchName: issue.branchName,
@@ -160,9 +162,40 @@ describe("toIssueSummary", () => {
     });
   });
 
-  it("omits the subtitle when there is no state or assignee to show", () => {
-    const bare: LinearIssue = { ...issue, state: { name: "" }, assignee: null };
+  it("omits the subtitle when there is no state name", () => {
+    const bare: LinearIssue = { ...issue, state: { name: "", type: "" } };
     expect(toIssueSummary(bare).subtitle).toBeUndefined();
+  });
+
+  it("reads the linked PR off Linear's own github attachment metadata", () => {
+    const withPr: LinearIssue = {
+      ...issue,
+      attachments: {
+        nodes: [
+          {
+            sourceType: "githubCommit",
+            metadata: { number: 999, url: "https://github.com/acme/repo/commit/abc", status: "open" },
+          },
+          {
+            sourceType: "github",
+            metadata: { number: 42, url: "https://github.com/acme/repo/pull/42", status: "draft" },
+          },
+        ],
+      },
+    };
+    expect(toIssueSummary(withPr).pr).toEqual({
+      number: 42,
+      url: "https://github.com/acme/repo/pull/42",
+      state: "draft",
+    });
+  });
+
+  it("omits pr when no attachment carries linked-PR metadata", () => {
+    const noPr: LinearIssue = {
+      ...issue,
+      attachments: { nodes: [{ sourceType: "github", metadata: { number: 42 } }] },
+    };
+    expect(toIssueSummary(noPr).pr).toBeUndefined();
   });
 });
 

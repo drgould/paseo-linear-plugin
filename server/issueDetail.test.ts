@@ -1,4 +1,7 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { promises as fs } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LinearIssue } from "../shared/types";
 import { getIssueDetail } from "./issueDetail";
 
@@ -10,10 +13,11 @@ const issue: LinearIssue = {
   url: "https://linear.app/acme/issue/ENG-123/plugin-attachments",
   branchName: "derek/eng-123-plugin-attachments",
   priorityLabel: "High",
-  state: { name: "In Progress" },
+  state: { name: "In Progress", type: "started" },
   assignee: { name: "Mohamed" },
   project: { name: "Paseo" },
   labels: { nodes: [{ name: "Feature" }] },
+  attachments: { nodes: [] },
 };
 
 function jsonResponse(body: unknown): Response {
@@ -25,11 +29,21 @@ function jsonResponse(body: unknown): Response {
 
 describe("getIssueDetail", () => {
   const originalApiKey = process.env.LINEAR_API_KEY;
+  const originalPaseoHome = process.env.PASEO_HOME;
   const originalFetch = global.fetch;
+  let dir: string;
 
-  afterEach(() => {
+  beforeEach(async () => {
+    dir = await fs.mkdtemp(join(tmpdir(), "paseo-linear-issuedetail-"));
+    process.env.PASEO_HOME = dir;
+  });
+
+  afterEach(async () => {
+    if (originalPaseoHome === undefined) delete process.env.PASEO_HOME;
+    else process.env.PASEO_HOME = originalPaseoHome;
     process.env.LINEAR_API_KEY = originalApiKey;
     global.fetch = originalFetch;
+    await fs.rm(dir, { recursive: true, force: true });
   });
 
   it("maps the Linear issue to the panel's issue detail shape", async () => {

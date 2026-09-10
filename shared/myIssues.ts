@@ -3,7 +3,7 @@ import { z } from "zod";
 import { IssueSummarySchema } from "./types";
 
 export const myIssuesRpc = defineRpc({
-  name: "linear.myIssues",
+  name: "linear.my-issues",
   input: z.object({}),
   output: z.object({ items: z.array(IssueSummarySchema) }),
 });
