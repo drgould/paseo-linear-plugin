@@ -32,3 +32,8 @@ export async function getApiKey(): Promise<string> {
   }
   return process.env.LINEAR_API_KEY ?? "";
 }
+
+export async function hasApiKey(): Promise<{ hasKey: boolean }> {
+  const apiKey = await getApiKey();
+  return { hasKey: apiKey.trim().length > 0 };
+}

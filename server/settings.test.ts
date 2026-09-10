@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { getApiKey, saveApiKey } from "./settings";
+import { getApiKey, hasApiKey, saveApiKey } from "./settings";
 
 describe("plugin API key settings", () => {
   let dir: string;
@@ -45,5 +45,14 @@ describe("plugin API key settings", () => {
     process.env.LINEAR_API_KEY = "lin_api_env";
     await saveApiKey({ apiKey: "lin_api_saved" });
     expect(await getApiKey()).toBe("lin_api_saved");
+  });
+
+  it("reports no key when nothing is configured", async () => {
+    expect(await hasApiKey()).toEqual({ hasKey: false });
+  });
+
+  it("reports a key once one is saved", async () => {
+    await saveApiKey({ apiKey: "lin_api_saved" });
+    expect(await hasApiKey()).toEqual({ hasKey: true });
   });
 });

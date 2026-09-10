@@ -3,7 +3,7 @@ import { z } from "zod";
 import { IssueDetailSchema } from "./types";
 
 export const issueDetailRpc = defineRpc({
-  name: "linear.issueDetail",
+  name: "linear.issue-detail",
   input: z.object({ id: z.string() }),
   output: IssueDetailSchema.nullable(),
 });
