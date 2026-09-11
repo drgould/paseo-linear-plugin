@@ -84,21 +84,41 @@ function issueStatusLabel(issue: z.infer<typeof LinearIssueSchema>): string | un
 }
 
 /**
+ * Linear's GitHub integration reports finer-grained review states in `metadata.status`
+ * (e.g. "inReview", "approved", "changesRequested") than our draft/open/merged/closed model,
+ * so only trust `status` when it's already one of ours; otherwise derive from the unambiguous
+ * `mergedAt`/`closedAt`/`draft` fields GitHub's integration populates, defaulting to "open".
+ * Those field names are GitHub-specific — for any other source (GitLab, Bitbucket) an
+ * unrecognized `status` can't be safely guessed, so returns `null` and the PR is dropped,
+ * matching the old, safer "don't show a PR we can't classify" behavior for those sources.
+ */
+function derivePrState(metadata: Record<string, unknown>, sourceType: string | null): PrState | null {
+  if (typeof metadata.status === "string" && PR_STATE_VALUES.includes(metadata.status)) {
+    return metadata.status as PrState;
+  }
+  if (sourceType?.toLowerCase() !== "github") return null;
+  if (typeof metadata.mergedAt === "string") return "merged";
+  if (typeof metadata.closedAt === "string") return "closed";
+  if (metadata.draft === true) return "draft";
+  return "open";
+}
+
+/**
  * Reads linked PRs/MRs straight off Linear's own attachment metadata (populated by its
  * GitHub/GitLab/Bitbucket integrations) instead of shelling out and guessing by branch name.
- * Skips commit-link attachments (e.g. "githubCommit"); trusts `metadata.status` already
- * being one of draft/open/merged/closed, which is what Linear's GitHub integration sends.
- * An issue can have more than one linked PR (stacked PRs, follow-ups), so this collects all
- * matching attachments rather than stopping at the first.
+ * Skips commit-link attachments (e.g. "githubCommit"). An issue can have more than one linked
+ * PR (stacked PRs, follow-ups), so this collects all matching attachments rather than stopping
+ * at the first.
  */
 function toIssuePrs(issue: z.infer<typeof LinearIssueSchema>): IssueSummary["prs"] {
   const prs: IssueSummary["prs"] = [];
   for (const attachment of issue.attachments.nodes) {
     if (attachment.sourceType?.toLowerCase().endsWith("commit")) continue;
-    const { number, url, status } = attachment.metadata;
-    if (typeof number === "number" && typeof url === "string" && typeof status === "string" && PR_STATE_VALUES.includes(status)) {
-      prs.push({ number, url, state: status as PrState });
-    }
+    const { number, url, title } = attachment.metadata;
+    if (typeof number !== "number" || typeof url !== "string") continue;
+    const state = derivePrState(attachment.metadata, attachment.sourceType);
+    if (!state) continue;
+    prs.push({ number, url, state, ...(typeof title === "string" ? { title } : {}) });
   }
   return prs;
 }

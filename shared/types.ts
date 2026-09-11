@@ -50,6 +50,7 @@ export const IssueSummarySchema = z.object({
         number: z.number(),
         url: z.string().url(),
         state: z.enum(PR_STATES),
+        title: z.string().optional(),
       }),
     )
     .default([]),
