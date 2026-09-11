@@ -148,6 +148,7 @@ describe("toIssueSummary", () => {
       url: issue.url,
       resourceType: "issue",
       branchName: issue.branchName,
+      prs: [],
       text: [
         "Linear issue ENG-123: Plugin attachments",
         `URL: ${issue.url}`,
@@ -183,11 +184,31 @@ describe("toIssueSummary", () => {
         ],
       },
     };
-    expect(toIssueSummary(withPr).pr).toEqual({
-      number: 42,
-      url: "https://github.com/acme/repo/pull/42",
-      state: "draft",
-    });
+    expect(toIssueSummary(withPr).prs).toEqual([
+      { number: 42, url: "https://github.com/acme/repo/pull/42", state: "draft" },
+    ]);
+  });
+
+  it("collects every linked PR when an issue has more than one", () => {
+    const withMultiplePrs: LinearIssue = {
+      ...issue,
+      attachments: {
+        nodes: [
+          {
+            sourceType: "github",
+            metadata: { number: 42, url: "https://github.com/acme/repo/pull/42", status: "open" },
+          },
+          {
+            sourceType: "github",
+            metadata: { number: 43, url: "https://github.com/acme/repo/pull/43", status: "merged" },
+          },
+        ],
+      },
+    };
+    expect(toIssueSummary(withMultiplePrs).prs).toEqual([
+      { number: 42, url: "https://github.com/acme/repo/pull/42", state: "open" },
+      { number: 43, url: "https://github.com/acme/repo/pull/43", state: "merged" },
+    ]);
   });
 
   it("omits pr when no attachment carries linked-PR metadata", () => {
@@ -195,7 +216,7 @@ describe("toIssueSummary", () => {
       ...issue,
       attachments: { nodes: [{ sourceType: "github", metadata: { number: 42 } }] },
     };
-    expect(toIssueSummary(noPr).pr).toBeUndefined();
+    expect(toIssueSummary(noPr).prs).toEqual([]);
   });
 });
 
