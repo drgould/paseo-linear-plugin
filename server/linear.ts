@@ -84,20 +84,23 @@ function issueStatusLabel(issue: z.infer<typeof LinearIssueSchema>): string | un
 }
 
 /**
- * Reads the linked PR/MR straight off Linear's own attachment metadata (populated by its
+ * Reads linked PRs/MRs straight off Linear's own attachment metadata (populated by its
  * GitHub/GitLab/Bitbucket integrations) instead of shelling out and guessing by branch name.
  * Skips commit-link attachments (e.g. "githubCommit"); trusts `metadata.status` already
  * being one of draft/open/merged/closed, which is what Linear's GitHub integration sends.
+ * An issue can have more than one linked PR (stacked PRs, follow-ups), so this collects all
+ * matching attachments rather than stopping at the first.
  */
-function toIssuePr(issue: z.infer<typeof LinearIssueSchema>): IssueSummary["pr"] {
+function toIssuePrs(issue: z.infer<typeof LinearIssueSchema>): IssueSummary["prs"] {
+  const prs: IssueSummary["prs"] = [];
   for (const attachment of issue.attachments.nodes) {
     if (attachment.sourceType?.toLowerCase().endsWith("commit")) continue;
     const { number, url, status } = attachment.metadata;
     if (typeof number === "number" && typeof url === "string" && typeof status === "string" && PR_STATE_VALUES.includes(status)) {
-      return { number, url, state: status as PrState };
+      prs.push({ number, url, state: status as PrState });
     }
   }
-  return undefined;
+  return prs;
 }
 
 function issueText(issue: z.infer<typeof LinearIssueSchema>): string {
@@ -116,7 +119,6 @@ function issueText(issue: z.infer<typeof LinearIssueSchema>): string {
 }
 
 export function toIssueSummary(issue: z.infer<typeof LinearIssueSchema>): IssueSummary {
-  const pr = toIssuePr(issue);
   return {
     id: issue.id,
     identifier: issue.identifier,
@@ -127,7 +129,7 @@ export function toIssueSummary(issue: z.infer<typeof LinearIssueSchema>): IssueS
     text: issueText(issue),
     resourceType: "issue",
     branchName: issue.branchName,
-    ...(pr ? { pr } : {}),
+    prs: toIssuePrs(issue),
   };
 }
 

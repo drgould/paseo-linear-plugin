@@ -44,13 +44,15 @@ export const IssueSummarySchema = z.object({
   text: z.string(),
   resourceType: z.string(),
   branchName: z.string(),
-  pr: z
-    .object({
-      number: z.number(),
-      url: z.string().url(),
-      state: z.enum(PR_STATES),
-    })
-    .optional(),
+  prs: z
+    .array(
+      z.object({
+        number: z.number(),
+        url: z.string().url(),
+        state: z.enum(PR_STATES),
+      }),
+    )
+    .default([]),
 });
 
 export type IssueSummary = z.infer<typeof IssueSummarySchema>;

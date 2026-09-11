@@ -205,18 +205,17 @@ export function MyIssuesSurface({ theme, layout, navigation }: PluginSurfaceProp
 
   function renderCard(issue: IssueSummary) {
     const openWorkspace = openWorkspaces.get(issue.id);
-    const openPr = issue.pr;
     return (
       <View key={issue.id} style={styles.row}>
         <Text style={styles.title}>{issue.title}</Text>
         <Text style={styles.subtitle}>{issue.identifier}</Text>
-        {openPr ? (
-          <Pressable accessibilityRole="link" onPress={() => Linking.openURL(openPr.url)}>
-            <Text style={[styles.prLink, { color: prColor(theme, openPr.state) }]}>
-              {PR_INDICATOR[openPr.state].glyph} PR #{openPr.number} {PR_INDICATOR[openPr.state].label}
+        {issue.prs.map((pr) => (
+          <Pressable key={pr.url} accessibilityRole="link" onPress={() => Linking.openURL(pr.url)}>
+            <Text style={[styles.prLink, { color: prColor(theme, pr.state) }]}>
+              {PR_INDICATOR[pr.state].glyph} PR #{pr.number} {PR_INDICATOR[pr.state].label}
             </Text>
           </Pressable>
-        ) : null}
+        ))}
         {openWorkspace ? (
           <Pressable
             accessibilityRole="button"
