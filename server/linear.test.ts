@@ -211,6 +211,82 @@ describe("toIssueSummary", () => {
     ]);
   });
 
+  it("treats a review-state status Linear's GitHub integration sends (e.g. inReview) as open", () => {
+    const withReviewState: LinearIssue = {
+      ...issue,
+      attachments: {
+        nodes: [
+          {
+            sourceType: "github",
+            metadata: {
+              number: 1618,
+              url: "https://github.com/acme/repo/pull/1618",
+              status: "inReview",
+              draft: false,
+              mergedAt: null,
+              closedAt: null,
+            },
+          },
+        ],
+      },
+    };
+    expect(toIssueSummary(withReviewState).prs).toEqual([
+      { number: 1618, url: "https://github.com/acme/repo/pull/1618", state: "open" },
+    ]);
+  });
+
+  it("derives merged/closed/draft from metadata when status isn't one of ours", () => {
+    const withDerivedStates: LinearIssue = {
+      ...issue,
+      attachments: {
+        nodes: [
+          {
+            sourceType: "github",
+            metadata: {
+              number: 1,
+              url: "https://github.com/acme/repo/pull/1",
+              status: "approved",
+              mergedAt: "2026-01-01T00:00:00.000Z",
+            },
+          },
+          {
+            sourceType: "github",
+            metadata: {
+              number: 2,
+              url: "https://github.com/acme/repo/pull/2",
+              status: "unreviewed",
+              closedAt: "2026-01-01T00:00:00.000Z",
+            },
+          },
+          {
+            sourceType: "github",
+            metadata: { number: 3, url: "https://github.com/acme/repo/pull/3", status: "unreviewed", draft: true },
+          },
+        ],
+      },
+    };
+    expect(toIssueSummary(withDerivedStates).prs).toEqual([
+      { number: 1, url: "https://github.com/acme/repo/pull/1", state: "merged" },
+      { number: 2, url: "https://github.com/acme/repo/pull/2", state: "closed" },
+      { number: 3, url: "https://github.com/acme/repo/pull/3", state: "draft" },
+    ]);
+  });
+
+  it("drops a non-GitHub attachment whose status isn't recognized, rather than guessing open", () => {
+    const withUnrecognizedGitlabStatus: LinearIssue = {
+      ...issue,
+      attachments: {
+        nodes: [
+          {
+            sourceType: "gitlab",
+            metadata: { number: 7, url: "https://gitlab.com/acme/repo/-/merge_requests/7", status: "merged_status" },
+          },
+        ],
+      },
+    };
+    expect(toIssueSummary(withUnrecognizedGitlabStatus).prs).toEqual([]);
+  });
+
   it("omits pr when no attachment carries linked-PR metadata", () => {
     const noPr: LinearIssue = {
       ...issue,

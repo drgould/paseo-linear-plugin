@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { getApiKey, hasApiKey, saveApiKey } from "./settings";
+import { getApiKey, getDefaultProfile, hasApiKey, saveApiKey, saveDefaultProfile } from "./settings";
 
 describe("plugin API key settings", () => {
   let dir: string;
@@ -54,5 +54,21 @@ describe("plugin API key settings", () => {
   it("reports a key once one is saved", async () => {
     await saveApiKey({ apiKey: "lin_api_saved" });
     expect(await hasApiKey()).toEqual({ hasKey: true });
+  });
+
+  it("saving the default profile does not clobber a previously saved API key", async () => {
+    await saveApiKey({ apiKey: "lin_api_saved" });
+    await saveDefaultProfile({ profileId: "profile-1" });
+    expect(await getApiKey()).toBe("lin_api_saved");
+    expect(await getDefaultProfile()).toEqual({ profileId: "profile-1" });
+  });
+
+  it("rejects a save instead of silently dropping other settings when the file is corrupted", async () => {
+    await saveApiKey({ apiKey: "lin_api_saved" });
+    const filePath = join(dir, "plugin-data", "linear", "settings.json");
+    await fs.writeFile(filePath, "not json", { mode: 0o600 });
+
+    await expect(saveDefaultProfile({ profileId: "profile-1" })).rejects.toThrow();
+    expect(await fs.readFile(filePath, "utf8")).toBe("not json");
   });
 });

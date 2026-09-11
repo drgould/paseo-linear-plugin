@@ -1,45 +1,90 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
 import { usePaseo, useRpc } from "@getpaseo/plugin/client";
+import { Icon } from "@getpaseo/plugin/client/react-native";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { Linking, Pressable, ScrollView, Text, View } from "react-native";
 import { ApiKeyForm } from "../settings/ApiKeyForm";
-import { hasApiKeyRpc } from "../../shared/settings";
+import { hasApiKeyRpc, getDefaultProfileRpc } from "../../shared/settings";
 import { myIssuesRpc } from "../../shared/myIssues";
+import { gitRemoteOwnerRpc, parseGitHubSlug } from "../../shared/gitRemote";
+import { branchExistsRpc } from "../../shared/branchExists";
 import type { IssueSummary, PrState } from "../../shared/types";
 import { type LinearProject, resolveProjectsForIssue, startWorkspaceForIssue } from "./createWorkspace";
 
-interface OpenWorkspace {
-  agentId: string;
-  workspaceId: string;
+/** "owner/repo#number" — PR numbers repeat across repos, so a bare number isn't a safe lookup key. */
+function prKey(repoSlug: string, number: number): string {
+  return `${repoSlug}#${number}`;
 }
 
-/** ponytail: fetches only the first agents page; add pagination if a user's open-agent count outgrows it. */
-function useOpenWorkspacesByIssueId(enabled: boolean) {
+/** Precomputes the issue-derived lookup maps once per issues list, independent of agent/workspace refetches. */
+function useIssueLookup(issues: IssueSummary[]) {
+  return useMemo(() => {
+    const issueIdByPrKey = new Map<string, string>();
+    const issueIdByBranchName = new Map<string, string>();
+    for (const issue of issues) {
+      for (const pr of issue.prs) {
+        const repoSlug = parseGitHubSlug(pr.url);
+        if (repoSlug) issueIdByPrKey.set(prKey(repoSlug, pr.number), issue.id);
+      }
+      issueIdByBranchName.set(issue.branchName, issue.id);
+    }
+    return { issueIdByPrKey, issueIdByBranchName };
+  }, [issues]);
+}
+
+/**
+ * Maps issue id -> open workspace id, from three sources: agents this plugin started (tagged with
+ * `labels.linearIssueId`), any workspace checked out against the issue's linked PR, and any workspace
+ * already on the issue's branch (covers a branch pushed before a PR exists) — so a workspace opened
+ * outside this plugin, e.g. from Paseo's own checkout flow, is still found.
+ * ponytail: fetches only the first page of each list; add pagination if either outgrows it.
+ */
+function useOpenWorkspaceIdsByIssueId(enabled: boolean, issues: IssueSummary[]) {
   const paseo = usePaseo();
-  const { data } = useQuery({
+  const { data: agentsData } = useQuery({
     queryKey: ["linear", "openWorkspaces"],
     queryFn: () => paseo.agents.list(),
     enabled,
   });
+  const { data: workspacesData } = useQuery({
+    queryKey: ["linear", "workspaces"],
+    queryFn: () => paseo.workspaces.list(),
+    enabled,
+  });
+  const { issueIdByPrKey, issueIdByBranchName } = useIssueLookup(issues);
   return useMemo(() => {
-    const map = new Map<string, OpenWorkspace>();
-    for (const entry of data?.entries ?? []) {
+    const map = new Map<string, string>();
+    for (const entry of agentsData?.entries ?? []) {
       const issueId = entry.agent.labels.linearIssueId;
       if (issueId && entry.agent.workspaceId && entry.agent.status !== "closed") {
-        map.set(issueId, { agentId: entry.agent.id, workspaceId: entry.agent.workspaceId });
+        map.set(issueId, entry.agent.workspaceId);
       }
     }
+    for (const workspace of workspacesData?.entries ?? []) {
+      if (workspace.archivingAt) continue;
+      const pr = workspace.githubRuntime?.pullRequest;
+      const prIssueId =
+        pr?.number !== undefined && pr.repoOwner && pr.repoName
+          ? issueIdByPrKey.get(prKey(`${pr.repoOwner}/${pr.repoName}`.toLowerCase(), pr.number))
+          : undefined;
+      const issueId =
+        prIssueId ??
+        (workspace.gitRuntime?.currentBranch
+          ? issueIdByBranchName.get(workspace.gitRuntime.currentBranch)
+          : undefined);
+      if (issueId && !map.has(issueId)) map.set(issueId, workspace.id);
+    }
     return map;
-  }, [data]);
+  }, [agentsData, workspacesData, issueIdByPrKey, issueIdByBranchName]);
 }
 
-const PR_INDICATOR: Record<PrState, { glyph: string; label: string }> = {
-  draft: { glyph: "◌", label: "Draft" },
-  open: { glyph: "●", label: "Open" },
-  merged: { glyph: "◆", label: "Merged" },
-  closed: { glyph: "✕", label: "Closed" },
+const PR_INDICATOR: Record<PrState, { icon: string; label: string }> = {
+  draft: { icon: "GitPullRequestDraft", label: "Draft" },
+  open: { icon: "GitPullRequest", label: "Open" },
+  merged: { icon: "GitMerge", label: "Merged" },
+  closed: { icon: "GitPullRequestClosed", label: "Closed" },
 };
 
 function prColor(theme: PluginTheme, state: PrState): string {
@@ -63,7 +108,7 @@ function columnRank(status: string): number {
 }
 
 function describeError(caught: unknown): string {
-  return caught instanceof Error ? caught.message : "Could not start workspace.";
+  return caught instanceof Error ? caught.message : "Could not create workspace.";
 }
 
 type PickerState =
@@ -81,12 +126,15 @@ export function MyIssuesSurface({ theme, layout, navigation }: PluginSurfaceProp
     queryFn: () => fetchHasApiKey({}),
   });
   const fetchMyIssues = useRpc(myIssuesRpc);
+  const fetchGitRemoteOwners = useRpc(gitRemoteOwnerRpc);
+  const fetchBranchExists = useRpc(branchExistsRpc);
+  const fetchDefaultProfile = useRpc(getDefaultProfileRpc);
   const { data, isLoading, error } = useQuery({
     queryKey: ["linear", "myIssues"],
     queryFn: () => fetchMyIssues({}),
     enabled: keyStatus?.hasKey === true,
   });
-  const openWorkspaces = useOpenWorkspacesByIssueId(keyStatus?.hasKey === true && !!data);
+  const openWorkspaceIds = useOpenWorkspaceIdsByIssueId(keyStatus?.hasKey === true && !!data, data?.items ?? []);
   const columns = useMemo(() => {
     const byStatus = new Map<string, IssueSummary[]>();
     for (const issue of data?.items ?? []) {
@@ -129,17 +177,43 @@ export function MyIssuesSurface({ theme, layout, navigation }: PluginSurfaceProp
       },
       title: { color: theme.colors.foreground, fontSize: layout.compact ? 15 : 16, fontWeight: "600" as const },
       subtitle: { color: theme.colors.foregroundMuted, fontSize: 13 },
-      message: { color: theme.colors.foregroundMuted, padding: layout.compact ? 16 : 24 },
+      message: { color: theme.colors.foregroundMuted },
+      screenMessage: {
+        flex: 1,
+        alignItems: "center" as const,
+        justifyContent: "center" as const,
+        gap: 8,
+        padding: layout.compact ? 16 : 24,
+      },
+      messageRow: { flexDirection: "row" as const, alignItems: "center" as const, gap: 6 },
       button: {
+        flexDirection: "row" as const,
+        alignItems: "center" as const,
+        gap: 6,
         padding: layout.compact ? 8 : 10,
         borderRadius: 8,
         backgroundColor: theme.colors.accent,
         alignSelf: "flex-start" as const,
       },
       buttonText: { color: theme.colors.accentForeground, fontSize: 13 },
-      prLink: { fontSize: 12 },
+      secondaryButton: {
+        flexDirection: "row" as const,
+        alignItems: "center" as const,
+        gap: 6,
+        padding: layout.compact ? 8 : 10,
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: theme.colors.border,
+        alignSelf: "flex-start" as const,
+      },
+      secondaryButtonText: { color: theme.colors.foregroundMuted, fontSize: 13 },
+      prLink: { flexDirection: "row" as const, alignItems: "center" as const, gap: 4 },
+      prLinkText: { fontSize: 12 },
       pickerRow: { flexDirection: "row" as const, flexWrap: "wrap" as const, gap: 8 },
       pickerOption: {
+        flexDirection: "row" as const,
+        alignItems: "center" as const,
+        gap: 4,
         paddingVertical: 6,
         paddingHorizontal: 10,
         borderRadius: 8,
@@ -151,16 +225,24 @@ export function MyIssuesSurface({ theme, layout, navigation }: PluginSurfaceProp
     [theme, layout.compact],
   );
 
+  async function invalidateWorkspaceQueries() {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["linear", "openWorkspaces"] }),
+      queryClient.invalidateQueries({ queryKey: ["linear", "workspaces"] }),
+    ]);
+  }
+
   async function handleStartWorkspace(issue: IssueSummary) {
     setStartingId(issue.id);
     try {
-      const projects = await resolveProjectsForIssue(paseo);
+      const projects = await resolveProjectsForIssue(paseo, issue, fetchGitRemoteOwners);
       if (projects.length === 0) {
         setPicker({ kind: "empty", issueId: issue.id });
         return;
       }
       if (projects.length === 1) {
-        await startWorkspaceForIssue(paseo, projects[0], issue);
+        await startWorkspaceForIssue(paseo, projects[0], issue, fetchBranchExists, fetchDefaultProfile);
+        await invalidateWorkspaceQueries();
         setPicker(null);
         return;
       }
@@ -175,7 +257,8 @@ export function MyIssuesSurface({ theme, layout, navigation }: PluginSurfaceProp
   async function handlePickProject(issue: IssueSummary, project: LinearProject) {
     setStartingId(issue.id);
     try {
-      await startWorkspaceForIssue(paseo, project, issue);
+      await startWorkspaceForIssue(paseo, project, issue, fetchBranchExists, fetchDefaultProfile);
+      await invalidateWorkspaceQueries();
       setPicker(null);
     } catch (caught) {
       setPicker({ kind: "error", issueId: issue.id, message: describeError(caught) });
@@ -186,7 +269,7 @@ export function MyIssuesSurface({ theme, layout, navigation }: PluginSurfaceProp
 
   if (isLoadingKeyStatus) {
     return (
-      <View style={styles.screen}>
+      <View style={[styles.screen, styles.screenMessage]}>
         <Text style={styles.message}>Loading…</Text>
       </View>
     );
@@ -204,43 +287,52 @@ export function MyIssuesSurface({ theme, layout, navigation }: PluginSurfaceProp
   }
 
   function renderCard(issue: IssueSummary) {
-    const openWorkspace = openWorkspaces.get(issue.id);
+    const workspaceId = openWorkspaceIds.get(issue.id);
     return (
       <View key={issue.id} style={styles.row}>
         <Text style={styles.title}>{issue.title}</Text>
         <Text style={styles.subtitle}>{issue.identifier}</Text>
         {issue.prs.map((pr) => (
-          <Pressable key={pr.url} accessibilityRole="link" onPress={() => Linking.openURL(pr.url)}>
-            <Text style={[styles.prLink, { color: prColor(theme, pr.state) }]}>
-              {PR_INDICATOR[pr.state].glyph} PR #{pr.number} {PR_INDICATOR[pr.state].label}
+          <Pressable key={pr.url} style={styles.prLink} accessibilityRole="link" onPress={() => Linking.openURL(pr.url)}>
+            <Icon name={PR_INDICATOR[pr.state].icon} size={14} color={prColor(theme, pr.state)} />
+            <Text style={[styles.prLinkText, { color: prColor(theme, pr.state) }]}>
+              PR #{pr.number} {PR_INDICATOR[pr.state].label}
             </Text>
           </Pressable>
         ))}
-        {openWorkspace ? (
+        {workspaceId ? (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`Open workspace for ${issue.identifier}`}
-            style={styles.button}
-            onPress={() => navigation?.openWorkspace({ workspaceId: openWorkspace.workspaceId })}
+            accessibilityLabel={`Go to workspace for ${issue.identifier}`}
+            style={styles.secondaryButton}
+            onPress={() => navigation?.openWorkspace({ workspaceId })}
           >
-            <Text style={styles.buttonText}>Open workspace</Text>
+            <Icon name="ArrowRight" size={14} color={theme.colors.foregroundMuted} />
+            <Text style={styles.secondaryButtonText}>Go to workspace</Text>
           </Pressable>
         ) : (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`Start workspace for ${issue.identifier}`}
+            accessibilityLabel={`Create workspace for ${issue.identifier}`}
             style={styles.button}
             disabled={startingId === issue.id}
             onPress={() => handleStartWorkspace(issue)}
           >
-            <Text style={styles.buttonText}>{startingId === issue.id ? "Starting…" : "Start workspace"}</Text>
+            <Icon name="Plus" size={14} color={theme.colors.accentForeground} />
+            <Text style={styles.buttonText}>{startingId === issue.id ? "Creating…" : "Create workspace"}</Text>
           </Pressable>
         )}
         {picker?.issueId === issue.id && picker.kind === "empty" ? (
-          <Text style={styles.message}>No projects available to start a workspace.</Text>
+          <View style={styles.messageRow}>
+            <Icon name="FolderX" size={14} color={theme.colors.foregroundMuted} />
+            <Text style={styles.message}>No projects available to create a workspace.</Text>
+          </View>
         ) : null}
         {picker?.issueId === issue.id && picker.kind === "error" ? (
-          <Text style={styles.message}>{picker.message}</Text>
+          <View style={styles.messageRow}>
+            <Icon name="AlertCircle" size={14} color={theme.colors.statusDanger} />
+            <Text style={styles.message}>{picker.message}</Text>
+          </View>
         ) : null}
         {picker?.issueId === issue.id && picker.kind === "choose" ? (
           <View style={styles.pickerRow}>
@@ -248,10 +340,11 @@ export function MyIssuesSurface({ theme, layout, navigation }: PluginSurfaceProp
               <Pressable
                 key={project.projectId}
                 accessibilityRole="button"
-                accessibilityLabel={`Start workspace in ${project.projectDisplayName}`}
+                accessibilityLabel={`Create workspace in ${project.projectDisplayName}`}
                 style={styles.pickerOption}
                 onPress={() => handlePickProject(issue, project)}
               >
+                <Icon name="FolderGit2" size={14} color={theme.colors.foreground} />
                 <Text style={styles.pickerOptionText}>{project.projectDisplayName}</Text>
               </Pressable>
             ))}
@@ -263,7 +356,7 @@ export function MyIssuesSurface({ theme, layout, navigation }: PluginSurfaceProp
 
   if (isLoading) {
     return (
-      <View style={styles.screen}>
+      <View style={[styles.screen, styles.screenMessage]}>
         <Text style={styles.message}>Loading issues…</Text>
       </View>
     );
@@ -271,7 +364,8 @@ export function MyIssuesSurface({ theme, layout, navigation }: PluginSurfaceProp
 
   if (error) {
     return (
-      <View style={styles.screen}>
+      <View style={[styles.screen, styles.screenMessage]}>
+        <Icon name="AlertCircle" size={20} color={theme.colors.statusDanger} />
         <Text style={styles.message}>Could not load Linear issues.</Text>
       </View>
     );
@@ -279,7 +373,8 @@ export function MyIssuesSurface({ theme, layout, navigation }: PluginSurfaceProp
 
   if (columns.length === 0) {
     return (
-      <View style={styles.screen}>
+      <View style={[styles.screen, styles.screenMessage]}>
+        <Icon name="Inbox" size={20} color={theme.colors.foregroundMuted} />
         <Text style={styles.message}>No assigned issues.</Text>
       </View>
     );
