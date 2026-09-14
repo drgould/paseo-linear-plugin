@@ -60,6 +60,10 @@ describe("getIssueDetail", () => {
       assignee: issue.assignee?.name ?? null,
       project: issue.project?.name ?? null,
       labels: issue.labels.nodes.map((label) => label.name),
+      description: issue.description,
+      parent: null,
+      children: [],
+      relations: [],
     });
   });
 

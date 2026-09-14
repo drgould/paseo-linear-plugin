@@ -297,7 +297,7 @@ describe("toIssueSummary", () => {
 });
 
 describe("toIssueDetail", () => {
-  it("maps assignee and project to null when absent", () => {
+  it("maps assignee and project to null when absent, with no parent/sub-issues/relations", () => {
     const unassigned: LinearIssue = { ...issue, assignee: null, project: null };
     expect(toIssueDetail(unassigned)).toEqual({
       id: "issue-uuid",
@@ -309,6 +309,69 @@ describe("toIssueDetail", () => {
       assignee: null,
       project: null,
       labels: ["Feature"],
+      description: issue.description,
+      parent: null,
+      children: [],
+      relations: [],
     });
+  });
+
+  it("maps parent, sub-issues, and blocks/blocked-by/related relations", () => {
+    const ref = (identifier: string, title: string, stateName: string) => ({
+      id: `${identifier}-uuid`,
+      identifier,
+      title,
+      url: `https://linear.app/acme/issue/${identifier}`,
+      state: { name: stateName, type: "started" },
+    });
+    const withRelations: LinearIssue = {
+      ...issue,
+      parent: ref("ENG-100", "Parent epic", "In Progress"),
+      children: { nodes: [ref("ENG-124", "Sub-task", "Todo")] },
+      relations: { nodes: [{ type: "blocks", relatedIssue: ref("ENG-125", "Downstream work", "Backlog") }] },
+      inverseRelations: { nodes: [{ type: "blocks", issue: ref("ENG-99", "Blocking dependency", "In Progress") }] },
+    };
+    expect(toIssueDetail(withRelations)).toEqual(
+      expect.objectContaining({
+        parent: {
+          id: "ENG-100-uuid",
+          identifier: "ENG-100",
+          title: "Parent epic",
+          url: "https://linear.app/acme/issue/ENG-100",
+          status: "In Progress",
+        },
+        children: [
+          {
+            id: "ENG-124-uuid",
+            identifier: "ENG-124",
+            title: "Sub-task",
+            url: "https://linear.app/acme/issue/ENG-124",
+            status: "Todo",
+          },
+        ],
+        relations: [
+          {
+            label: "Blocks",
+            issue: {
+              id: "ENG-125-uuid",
+              identifier: "ENG-125",
+              title: "Downstream work",
+              url: "https://linear.app/acme/issue/ENG-125",
+              status: "Backlog",
+            },
+          },
+          {
+            label: "Blocked by",
+            issue: {
+              id: "ENG-99-uuid",
+              identifier: "ENG-99",
+              title: "Blocking dependency",
+              url: "https://linear.app/acme/issue/ENG-99",
+              status: "In Progress",
+            },
+          },
+        ],
+      }),
+    );
   });
 });

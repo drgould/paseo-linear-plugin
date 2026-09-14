@@ -1,19 +1,21 @@
-import type { PluginTheme } from "@getpaseo/plugin";
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
 import { usePaseo, useRpc } from "@getpaseo/plugin/client";
 import { Icon } from "@getpaseo/plugin/client/react-native";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { Linking, Pressable, ScrollView, Text, View } from "react-native";
+import { Linking, type LayoutChangeEvent, Pressable, ScrollView, Text, View } from "react-native";
 import { ApiKeyForm } from "../settings/ApiKeyForm";
 import { hasApiKeyRpc, getDefaultProfileRpc } from "../../shared/settings";
 import { myIssuesRpc } from "../../shared/myIssues";
 import { gitRemoteOwnerRpc, parseGitHubSlug } from "../../shared/gitRemote";
 import { branchExistsRpc } from "../../shared/branchExists";
 import { listBranchesRpc } from "../../shared/listBranches";
-import type { IssueSummary, PrState } from "../../shared/types";
+import { issueDetailRpc } from "../../shared/issueDetail";
+import type { IssueSummary } from "../../shared/types";
 import { type LinearProject, resolveProjectsForIssue } from "./createWorkspace";
 import { CreateWorkspaceDialog } from "./CreateWorkspaceDialog";
+import { IssueSidePanel, PANEL_DEFAULT_WIDTH } from "./IssueSidePanel";
+import { PR_INDICATOR, prColor } from "./prIndicator";
 
 /** "owner/repo#number" — PR numbers repeat across repos, so a bare number isn't a safe lookup key. */
 function prKey(repoSlug: string, number: number): string {
@@ -82,26 +84,6 @@ function useOpenWorkspaceIdsByIssueId(enabled: boolean, issues: IssueSummary[]) 
   }, [agentsData, workspacesData, issueIdByPrKey, issueIdByBranchName]);
 }
 
-const PR_INDICATOR: Record<PrState, { icon: string; label: string }> = {
-  draft: { icon: "GitPullRequestDraft", label: "Draft" },
-  open: { icon: "GitPullRequest", label: "Open" },
-  merged: { icon: "GitMerge", label: "Merged" },
-  closed: { icon: "GitPullRequestClosed", label: "Closed" },
-};
-
-function prColor(theme: PluginTheme, state: PrState): string {
-  switch (state) {
-    case "draft":
-      return theme.colors.foregroundMuted;
-    case "open":
-      return theme.colors.statusSuccess;
-    case "merged":
-      return theme.colors.accent;
-    case "closed":
-      return theme.colors.statusDanger;
-  }
-}
-
 const COLUMN_ORDER = ["backlog", "todo", "in progress", "in review", "needs review"];
 
 function columnRank(status: string): number {
@@ -132,6 +114,7 @@ export function MyIssuesSurface({ theme, layout, navigation }: PluginSurfaceProp
   const fetchBranchExists = useRpc(branchExistsRpc);
   const fetchListBranches = useRpc(listBranchesRpc);
   const fetchDefaultProfile = useRpc(getDefaultProfileRpc);
+  const fetchIssueDetail = useRpc(issueDetailRpc);
   const { data, isLoading, error } = useQuery({
     queryKey: ["linear", "myIssues"],
     queryFn: () => fetchMyIssues({}),
@@ -151,6 +134,13 @@ export function MyIssuesSurface({ theme, layout, navigation }: PluginSurfaceProp
   }, [data]);
   const [picker, setPicker] = useState<PickerState>(null);
   const [startingId, setStartingId] = useState<string | null>(null);
+  const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null);
+  const [panelWidth, setPanelWidth] = useState(PANEL_DEFAULT_WIDTH);
+  const [contentWidth, setContentWidth] = useState(0);
+  // Looked up live off `data` each render rather than snapshotting the clicked IssueSummary, so a
+  // background refetch (e.g. window refocus) updates the open panel's status/PR list instead of
+  // leaving it stuck on what the card looked like at click time.
+  const selectedIssue = selectedIssueId ? (data?.items.find((item) => item.id === selectedIssueId) ?? null) : null;
 
   const styles = useMemo(
     () => ({
@@ -159,13 +149,17 @@ export function MyIssuesSurface({ theme, layout, navigation }: PluginSurfaceProp
         width: "100%" as const,
         backgroundColor: theme.colors.surface0,
       },
+      content: { flex: 1, flexDirection: "row" as const, width: "100%" as const },
       board: {
-        flexGrow: 1,
+        flex: 1,
+        flexDirection: "row" as const,
         padding: layout.compact ? 16 : 24,
         gap: layout.compact ? 12 : 16,
       },
       column: {
-        width: layout.compact ? 240 : 280,
+        flexGrow: 1,
+        flexShrink: 1,
+        flexBasis: layout.compact ? 240 : 280,
         height: "100%" as const,
         gap: layout.compact ? 8 : 12,
       },
@@ -263,11 +257,25 @@ export function MyIssuesSurface({ theme, layout, navigation }: PluginSurfaceProp
   function renderCard(issue: IssueSummary) {
     const workspaceId = openWorkspaceIds.get(issue.id);
     return (
-      <View key={issue.id} style={styles.row}>
+      <Pressable
+        key={issue.id}
+        style={styles.row}
+        accessibilityRole="button"
+        accessibilityLabel={`Open details for ${issue.identifier}`}
+        onPress={() => setSelectedIssueId(issue.id)}
+      >
         <Text style={styles.title}>{issue.title}</Text>
         <Text style={styles.subtitle}>{issue.identifier}</Text>
         {issue.prs.map((pr) => (
-          <Pressable key={pr.url} style={styles.prLink} accessibilityRole="link" onPress={() => Linking.openURL(pr.url)}>
+          <Pressable
+            key={pr.url}
+            style={styles.prLink}
+            accessibilityRole="link"
+            onPress={(event) => {
+              event.stopPropagation();
+              Linking.openURL(pr.url);
+            }}
+          >
             <Icon name={PR_INDICATOR[pr.state].icon} size={14} color={prColor(theme, pr.state)} />
             <Text style={[styles.prLinkText, { color: prColor(theme, pr.state) }]}>
               PR #{pr.number} {PR_INDICATOR[pr.state].label}
@@ -279,7 +287,10 @@ export function MyIssuesSurface({ theme, layout, navigation }: PluginSurfaceProp
             accessibilityRole="button"
             accessibilityLabel={`Go to workspace for ${issue.identifier}`}
             style={styles.secondaryButton}
-            onPress={() => navigation?.openWorkspace({ workspaceId })}
+            onPress={(event) => {
+              event.stopPropagation();
+              navigation?.openWorkspace({ workspaceId });
+            }}
           >
             <Icon name="ArrowRight" size={14} color={theme.colors.foregroundMuted} />
             <Text style={styles.secondaryButtonText}>Go to workspace</Text>
@@ -290,7 +301,10 @@ export function MyIssuesSurface({ theme, layout, navigation }: PluginSurfaceProp
             accessibilityLabel={`Create workspace for ${issue.identifier}`}
             style={styles.button}
             disabled={startingId === issue.id}
-            onPress={() => handleStartWorkspace(issue)}
+            onPress={(event) => {
+              event.stopPropagation();
+              handleStartWorkspace(issue);
+            }}
           >
             <Icon name="Plus" size={14} color={theme.colors.accentForeground} />
             <Text style={styles.buttonText}>{startingId === issue.id ? "Creating…" : "Create workspace"}</Text>
@@ -308,7 +322,7 @@ export function MyIssuesSurface({ theme, layout, navigation }: PluginSurfaceProp
             <Text style={styles.message}>{picker.message}</Text>
           </View>
         ) : null}
-      </View>
+      </Pressable>
     );
   }
 
@@ -340,18 +354,31 @@ export function MyIssuesSurface({ theme, layout, navigation }: PluginSurfaceProp
 
   return (
     <View style={styles.screen}>
-      <ScrollView horizontal contentContainerStyle={styles.board}>
-        {columns.map(({ status, items }) => (
-          <View key={status} style={styles.column}>
-            <Text style={styles.columnHeader}>
-              {status.toUpperCase()} · {items.length}
-            </Text>
-            <ScrollView style={styles.columnScroll} contentContainerStyle={styles.columnList}>
-              {items.map(renderCard)}
-            </ScrollView>
-          </View>
-        ))}
-      </ScrollView>
+      <View style={styles.content} onLayout={(event: LayoutChangeEvent) => setContentWidth(event.nativeEvent.layout.width)}>
+        <View style={styles.board}>
+          {columns.map(({ status, items }) => (
+            <View key={status} style={styles.column}>
+              <Text style={styles.columnHeader}>
+                {status.toUpperCase()} · {items.length}
+              </Text>
+              <ScrollView style={styles.columnScroll} contentContainerStyle={styles.columnList}>
+                {items.map(renderCard)}
+              </ScrollView>
+            </View>
+          ))}
+        </View>
+        {selectedIssue ? (
+          <IssueSidePanel
+            theme={theme}
+            issue={selectedIssue}
+            fetchIssueDetail={fetchIssueDetail}
+            onClose={() => setSelectedIssueId(null)}
+            width={panelWidth}
+            onWidthChange={setPanelWidth}
+            containerWidth={contentWidth}
+          />
+        ) : null}
+      </View>
       {picker?.kind === "configure" ? (
         <CreateWorkspaceDialog
           theme={theme}

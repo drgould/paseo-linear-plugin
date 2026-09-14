@@ -1,5 +1,12 @@
 import { z } from "zod";
-import { type IssueDetail, type IssueSummary, LinearIssueSchema, PR_STATE_VALUES, type PrState } from "../shared/types";
+import {
+  type IssueDetail,
+  type IssueRef,
+  type IssueSummary,
+  LinearIssueSchema,
+  PR_STATE_VALUES,
+  type PrState,
+} from "../shared/types";
 
 const LinearGraphqlErrorSchema = z.object({ message: z.string() }).passthrough();
 const ExactIssueResponseSchema = z.object({
@@ -21,6 +28,8 @@ const ViewerAssignedIssuesResponseSchema = z.object({
   errors: z.array(LinearGraphqlErrorSchema).optional(),
 });
 
+const ISSUE_REF_FIELDS = `id identifier title url state { name }`;
+
 const ISSUE_FIELDS = `
   id
   identifier
@@ -36,11 +45,27 @@ const ISSUE_FIELDS = `
   attachments { nodes { sourceType metadata } }
 `;
 
-const EXACT_ISSUE_QUERY = `
-  query PaseoLinearIssue($id: String!) {
-    issue(id: $id) { ${ISSUE_FIELDS} }
-  }
+/**
+ * Parent/sub-issues/relations for the single-issue detail panel. Kept off the list queries below —
+ * each adds a nested connection per issue, and Linear's query-complexity cap (10000) can't fit that
+ * fanned out across up to 20 issues (a 20-issue list query with these hit ~19000).
+ */
+const ISSUE_DETAIL_FIELDS = `
+  ${ISSUE_FIELDS}
+  parent { ${ISSUE_REF_FIELDS} }
+  children { nodes { ${ISSUE_REF_FIELDS} } }
+  relations { nodes { type relatedIssue { ${ISSUE_REF_FIELDS} } } }
+  inverseRelations { nodes { type issue { ${ISSUE_REF_FIELDS} } } }
 `;
+
+/** `fields` is `ISSUE_FIELDS` for a plain identifier search and `ISSUE_DETAIL_FIELDS` for the detail panel — same query, different payload. */
+function exactIssueQuery(fields: string): string {
+  return `
+    query PaseoLinearIssue($id: String!) {
+      issue(id: $id) { ${fields} }
+    }
+  `;
+}
 
 const SEARCH_ISSUES_QUERY = `
   query PaseoLinearIssues($filter: IssueFilter) {
@@ -153,6 +178,29 @@ export function toIssueSummary(issue: z.infer<typeof LinearIssueSchema>): IssueS
   };
 }
 
+/** Forward label: this issue "blocks" the other. Inverse label: the other issue "blocks" this one. */
+const RELATION_LABELS: Record<string, { forward: string; inverse: string }> = {
+  blocks: { forward: "Blocks", inverse: "Blocked by" },
+  duplicate: { forward: "Duplicate of", inverse: "Duplicated by" },
+  related: { forward: "Related to", inverse: "Related to" },
+};
+
+function toIssueRef(ref: { id: string; identifier: string; title: string; url: string; state: { name: string } }): IssueRef {
+  return { id: ref.id, identifier: ref.identifier, title: ref.title, url: ref.url, status: ref.state.name };
+}
+
+function toRelations(issue: z.infer<typeof LinearIssueSchema>): IssueDetail["relations"] {
+  const forward = (issue.relations?.nodes ?? []).map((relation) => ({
+    label: RELATION_LABELS[relation.type]?.forward ?? relation.type,
+    issue: toIssueRef(relation.relatedIssue),
+  }));
+  const inverse = (issue.inverseRelations?.nodes ?? []).map((relation) => ({
+    label: RELATION_LABELS[relation.type]?.inverse ?? relation.type,
+    issue: toIssueRef(relation.issue),
+  }));
+  return [...forward, ...inverse];
+}
+
 export function toIssueDetail(issue: z.infer<typeof LinearIssueSchema>): IssueDetail {
   return {
     id: issue.id,
@@ -164,6 +212,10 @@ export function toIssueDetail(issue: z.infer<typeof LinearIssueSchema>): IssueDe
     assignee: issue.assignee?.name ?? null,
     project: issue.project?.name ?? null,
     labels: issue.labels.nodes.map((label) => label.name),
+    description: issue.description,
+    parent: issue.parent ? toIssueRef(issue.parent) : null,
+    children: (issue.children?.nodes ?? []).map(toIssueRef),
+    relations: toRelations(issue),
   };
 }
 
@@ -214,9 +266,9 @@ export function createLinearClient(options: LinearClientOptions): LinearClient {
     return response.json();
   }
 
-  async function findExact(identifier: string): Promise<z.infer<typeof LinearIssueSchema>[]> {
+  async function findExact(identifier: string, fields: string): Promise<z.infer<typeof LinearIssueSchema>[]> {
     const response = ExactIssueResponseSchema.parse(
-      await graphql({ query: EXACT_ISSUE_QUERY, variables: { id: identifier } }),
+      await graphql({ query: exactIssueQuery(fields), variables: { id: identifier } }),
     );
     throwGraphqlErrors(response.errors);
     return response.data?.issue ? [response.data.issue] : [];
@@ -236,7 +288,7 @@ export function createLinearClient(options: LinearClientOptions): LinearClient {
     async search(query: string) {
       const normalized = query.trim();
       if (LINEAR_IDENTIFIER.test(normalized)) {
-        return findExact(normalized.toUpperCase());
+        return findExact(normalized.toUpperCase(), ISSUE_FIELDS);
       }
       return searchTitles(normalized);
     },
@@ -247,7 +299,7 @@ export function createLinearClient(options: LinearClientOptions): LinearClient {
       return response.data.viewer.assignedIssues.nodes;
     },
     async getIssue(id: string) {
-      const issues = await findExact(id);
+      const issues = await findExact(id, ISSUE_DETAIL_FIELDS);
       return issues[0] ?? null;
     },
   };
