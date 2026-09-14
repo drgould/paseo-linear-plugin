@@ -11,6 +11,8 @@ import { resolveGitRemoteOwners } from "./server/gitRemote";
 import { gitRemoteOwnerRpc } from "./shared/gitRemote";
 import { checkBranchExists } from "./server/branchExists";
 import { branchExistsRpc } from "./shared/branchExists";
+import { listBranches } from "./server/listBranches";
+import { listBranchesRpc } from "./shared/listBranches";
 
 export default function contribute(server: PluginServerContext) {
   server.handle(searchIssuesRpc, searchIssues);
@@ -22,5 +24,6 @@ export default function contribute(server: PluginServerContext) {
   server.handle(issueDetailRpc, getIssueDetail);
   server.handle(gitRemoteOwnerRpc, resolveGitRemoteOwners);
   server.handle(branchExistsRpc, checkBranchExists);
+  server.handle(listBranchesRpc, listBranches);
   return () => {};
 }

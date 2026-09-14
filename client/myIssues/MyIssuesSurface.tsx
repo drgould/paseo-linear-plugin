@@ -10,8 +10,10 @@ import { hasApiKeyRpc, getDefaultProfileRpc } from "../../shared/settings";
 import { myIssuesRpc } from "../../shared/myIssues";
 import { gitRemoteOwnerRpc, parseGitHubSlug } from "../../shared/gitRemote";
 import { branchExistsRpc } from "../../shared/branchExists";
+import { listBranchesRpc } from "../../shared/listBranches";
 import type { IssueSummary, PrState } from "../../shared/types";
-import { type LinearProject, resolveProjectsForIssue, startWorkspaceForIssue } from "./createWorkspace";
+import { type LinearProject, resolveProjectsForIssue } from "./createWorkspace";
+import { CreateWorkspaceDialog } from "./CreateWorkspaceDialog";
 
 /** "owner/repo#number" — PR numbers repeat across repos, so a bare number isn't a safe lookup key. */
 function prKey(repoSlug: string, number: number): string {
@@ -113,7 +115,7 @@ function describeError(caught: unknown): string {
 
 type PickerState =
   | { kind: "empty"; issueId: string }
-  | { kind: "choose"; issueId: string; projects: LinearProject[] }
+  | { kind: "configure"; issue: IssueSummary; projects: LinearProject[] }
   | { kind: "error"; issueId: string; message: string }
   | null;
 
@@ -128,6 +130,7 @@ export function MyIssuesSurface({ theme, layout, navigation }: PluginSurfaceProp
   const fetchMyIssues = useRpc(myIssuesRpc);
   const fetchGitRemoteOwners = useRpc(gitRemoteOwnerRpc);
   const fetchBranchExists = useRpc(branchExistsRpc);
+  const fetchListBranches = useRpc(listBranchesRpc);
   const fetchDefaultProfile = useRpc(getDefaultProfileRpc);
   const { data, isLoading, error } = useQuery({
     queryKey: ["linear", "myIssues"],
@@ -153,9 +156,11 @@ export function MyIssuesSurface({ theme, layout, navigation }: PluginSurfaceProp
     () => ({
       screen: {
         flex: 1,
+        width: "100%" as const,
         backgroundColor: theme.colors.surface0,
       },
       board: {
+        flexGrow: 1,
         padding: layout.compact ? 16 : 24,
         gap: layout.compact ? 12 : 16,
       },
@@ -209,18 +214,6 @@ export function MyIssuesSurface({ theme, layout, navigation }: PluginSurfaceProp
       secondaryButtonText: { color: theme.colors.foregroundMuted, fontSize: 13 },
       prLink: { flexDirection: "row" as const, alignItems: "center" as const, gap: 4 },
       prLinkText: { fontSize: 12 },
-      pickerRow: { flexDirection: "row" as const, flexWrap: "wrap" as const, gap: 8 },
-      pickerOption: {
-        flexDirection: "row" as const,
-        alignItems: "center" as const,
-        gap: 4,
-        paddingVertical: 6,
-        paddingHorizontal: 10,
-        borderRadius: 8,
-        borderWidth: 1,
-        borderColor: theme.colors.border,
-      },
-      pickerOptionText: { color: theme.colors.foreground, fontSize: 12 },
     }),
     [theme, layout.compact],
   );
@@ -240,26 +233,7 @@ export function MyIssuesSurface({ theme, layout, navigation }: PluginSurfaceProp
         setPicker({ kind: "empty", issueId: issue.id });
         return;
       }
-      if (projects.length === 1) {
-        await startWorkspaceForIssue(paseo, projects[0], issue, fetchBranchExists, fetchDefaultProfile);
-        await invalidateWorkspaceQueries();
-        setPicker(null);
-        return;
-      }
-      setPicker({ kind: "choose", issueId: issue.id, projects });
-    } catch (caught) {
-      setPicker({ kind: "error", issueId: issue.id, message: describeError(caught) });
-    } finally {
-      setStartingId(null);
-    }
-  }
-
-  async function handlePickProject(issue: IssueSummary, project: LinearProject) {
-    setStartingId(issue.id);
-    try {
-      await startWorkspaceForIssue(paseo, project, issue, fetchBranchExists, fetchDefaultProfile);
-      await invalidateWorkspaceQueries();
-      setPicker(null);
+      setPicker({ kind: "configure", issue, projects });
     } catch (caught) {
       setPicker({ kind: "error", issueId: issue.id, message: describeError(caught) });
     } finally {
@@ -322,32 +296,16 @@ export function MyIssuesSurface({ theme, layout, navigation }: PluginSurfaceProp
             <Text style={styles.buttonText}>{startingId === issue.id ? "Creating…" : "Create workspace"}</Text>
           </Pressable>
         )}
-        {picker?.issueId === issue.id && picker.kind === "empty" ? (
+        {picker?.kind === "empty" && picker.issueId === issue.id ? (
           <View style={styles.messageRow}>
             <Icon name="FolderX" size={14} color={theme.colors.foregroundMuted} />
             <Text style={styles.message}>No projects available to create a workspace.</Text>
           </View>
         ) : null}
-        {picker?.issueId === issue.id && picker.kind === "error" ? (
+        {picker?.kind === "error" && picker.issueId === issue.id ? (
           <View style={styles.messageRow}>
             <Icon name="AlertCircle" size={14} color={theme.colors.statusDanger} />
             <Text style={styles.message}>{picker.message}</Text>
-          </View>
-        ) : null}
-        {picker?.issueId === issue.id && picker.kind === "choose" ? (
-          <View style={styles.pickerRow}>
-            {picker.projects.map((project) => (
-              <Pressable
-                key={project.projectId}
-                accessibilityRole="button"
-                accessibilityLabel={`Create workspace in ${project.projectDisplayName}`}
-                style={styles.pickerOption}
-                onPress={() => handlePickProject(issue, project)}
-              >
-                <Icon name="FolderGit2" size={14} color={theme.colors.foreground} />
-                <Text style={styles.pickerOptionText}>{project.projectDisplayName}</Text>
-              </Pressable>
-            ))}
           </View>
         ) : null}
       </View>
@@ -381,17 +339,35 @@ export function MyIssuesSurface({ theme, layout, navigation }: PluginSurfaceProp
   }
 
   return (
-    <ScrollView style={styles.screen} horizontal contentContainerStyle={styles.board}>
-      {columns.map(({ status, items }) => (
-        <View key={status} style={styles.column}>
-          <Text style={styles.columnHeader}>
-            {status.toUpperCase()} · {items.length}
-          </Text>
-          <ScrollView style={styles.columnScroll} contentContainerStyle={styles.columnList}>
-            {items.map(renderCard)}
-          </ScrollView>
-        </View>
-      ))}
-    </ScrollView>
+    <View style={styles.screen}>
+      <ScrollView horizontal contentContainerStyle={styles.board}>
+        {columns.map(({ status, items }) => (
+          <View key={status} style={styles.column}>
+            <Text style={styles.columnHeader}>
+              {status.toUpperCase()} · {items.length}
+            </Text>
+            <ScrollView style={styles.columnScroll} contentContainerStyle={styles.columnList}>
+              {items.map(renderCard)}
+            </ScrollView>
+          </View>
+        ))}
+      </ScrollView>
+      {picker?.kind === "configure" ? (
+        <CreateWorkspaceDialog
+          theme={theme}
+          issue={picker.issue}
+          projects={picker.projects}
+          fetchBranchExists={fetchBranchExists}
+          fetchListBranches={fetchListBranches}
+          fetchDefaultProfile={fetchDefaultProfile}
+          onCancel={() => setPicker(null)}
+          onCreated={(workspaceId) => {
+            void invalidateWorkspaceQueries();
+            setPicker(null);
+            navigation?.openWorkspace({ workspaceId });
+          }}
+        />
+      ) : null}
+    </View>
   );
 }

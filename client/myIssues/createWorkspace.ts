@@ -25,7 +25,7 @@ export interface LinearProject {
 }
 
 /** The issue's open/draft PR, when it's a GitHub PR — the only kind we can check out or attach as `github_pr`. */
-function findActiveGithubPr(issue: IssueSummary) {
+export function findActiveGithubPr(issue: IssueSummary) {
   const pr = issue.prs.find((entry) => entry.state === "open" || entry.state === "draft");
   return pr && parseGitHubSlug(pr.url) ? pr : undefined;
 }
@@ -77,47 +77,74 @@ interface AgentConfig {
   thinkingOptionId?: string;
 }
 
-/** Uses the default agent profile set in Linear settings when one is saved, else the first available provider/model. */
-async function resolveAgentConfig(paseo: Paseo, fetchDefaultProfile: FetchDefaultProfile): Promise<AgentConfig> {
-  const { profileId } = await fetchDefaultProfile({});
+/** Resolves a specific saved profile (or, for `null`, the first available provider/model). */
+async function resolveAgentConfigForProfile(paseo: Paseo, profileId: string | null): Promise<AgentConfig> {
   const profile = profileId ? (await paseo.config.get()).config.agentProfiles?.find((entry) => entry.id === profileId) : undefined;
   const provider = profile?.provider ?? (await pickAvailableProvider(paseo));
   const model = await resolveModel(paseo, provider, profile?.model);
   return { provider: `${provider}/${model}`, modeId: profile?.modeId, thinkingOptionId: profile?.thinkingOptionId };
 }
 
-/** Checks out the PR's branch when one is open, else the already-pushed branch when one exists, else branches off fresh. */
+/** Uses the default agent profile set in Linear settings when one is saved, else the first available provider/model. */
+async function resolveAgentConfig(paseo: Paseo, fetchDefaultProfile: FetchDefaultProfile): Promise<AgentConfig> {
+  const { profileId } = await fetchDefaultProfile({});
+  return resolveAgentConfigForProfile(paseo, profileId);
+}
+
+/**
+ * `"auto"` checks out the PR's branch when one is open, else the already-pushed branch when one exists, else
+ * branches off fresh. `"fresh"` always branches off, skipping both checks. `"checkout"` checks out an arbitrary
+ * ref the user picked from the repo (local `refs/heads/...` or remote `refs/remotes/origin/...`), unrelated to
+ * the issue's own branch/PR.
+ */
+export type BranchSourceOverride =
+  | { kind: "auto" }
+  | { kind: "fresh"; baseBranch?: string }
+  | { kind: "checkout"; ref: string };
+
 async function resolveWorktreeSource(
   project: LinearProject,
   issue: IssueSummary,
   fetchBranchExists: FetchBranchExists,
+  branchSource: BranchSourceOverride = { kind: "auto" },
 ) {
-  const activePr = findActiveGithubPr(issue);
-  if (activePr) {
+  if (branchSource.kind === "checkout") {
     return {
       kind: "worktree" as const,
       cwd: project.projectRootPath,
       action: "checkout" as const,
-      githubPrNumber: activePr.number,
+      refName: branchSource.ref,
     };
   }
-  const { exists } = await fetchBranchExists({
-    projectRootPath: project.projectRootPath,
-    branchName: issue.branchName,
-  });
-  if (exists) {
-    return {
-      kind: "worktree" as const,
-      cwd: project.projectRootPath,
-      action: "checkout" as const,
-      refName: `refs/remotes/origin/${issue.branchName}`,
-    };
+  if (branchSource.kind === "auto") {
+    const activePr = findActiveGithubPr(issue);
+    if (activePr) {
+      return {
+        kind: "worktree" as const,
+        cwd: project.projectRootPath,
+        action: "checkout" as const,
+        githubPrNumber: activePr.number,
+      };
+    }
+    const { exists } = await fetchBranchExists({
+      projectRootPath: project.projectRootPath,
+      branchName: issue.branchName,
+    });
+    if (exists) {
+      return {
+        kind: "worktree" as const,
+        cwd: project.projectRootPath,
+        action: "checkout" as const,
+        refName: `refs/remotes/origin/${issue.branchName}`,
+      };
+    }
   }
   return {
     kind: "worktree" as const,
     cwd: project.projectRootPath,
     action: "branch-off" as const,
     branchName: issue.branchName,
+    ...(branchSource.kind === "fresh" && branchSource.baseBranch ? { baseBranch: branchSource.baseBranch } : {}),
   };
 }
 
@@ -150,16 +177,28 @@ function buildPrAttachment(pr: IssueSummary["prs"][number]) {
   };
 }
 
+export interface WorkspaceOverrides {
+  /** `null` means "Auto" (first available provider); omit entirely to use the saved default profile. */
+  profileId?: string | null;
+  branchSource?: BranchSourceOverride;
+}
+
 export async function startWorkspaceForIssue(
   paseo: Paseo,
   project: LinearProject,
   issue: IssueSummary,
   fetchBranchExists: FetchBranchExists,
   fetchDefaultProfile: FetchDefaultProfile,
-): Promise<void> {
-  const config = await resolveAgentConfig(paseo, fetchDefaultProfile);
-  const activePr = findActiveGithubPr(issue);
-  const source = await resolveWorktreeSource(project, issue, fetchBranchExists);
+  overrides?: WorkspaceOverrides,
+): Promise<string> {
+  const config =
+    overrides?.profileId !== undefined
+      ? await resolveAgentConfigForProfile(paseo, overrides.profileId)
+      : await resolveAgentConfig(paseo, fetchDefaultProfile);
+  // Only attach the PR when the branch source can actually resolve through it — "fresh" or an explicit
+  // "checkout" of an unrelated ref means the agent's real git state has nothing to do with this PR.
+  const activePr = (overrides?.branchSource?.kind ?? "auto") === "auto" ? findActiveGithubPr(issue) : undefined;
+  const source = await resolveWorktreeSource(project, issue, fetchBranchExists, overrides?.branchSource);
   const workspace = await paseo.workspaces.create({
     title: `${issue.identifier}: ${issue.title}`,
     source,
@@ -170,4 +209,5 @@ export async function startWorkspaceForIssue(
     attachments: activePr ? [buildIssueAttachment(issue), buildPrAttachment(activePr)] : [buildIssueAttachment(issue)],
     labels: { linearIssueId: issue.id },
   });
+  return workspace.id;
 }
