@@ -96,6 +96,40 @@ describe("createLinearClient", () => {
     expect(result.map((item) => item.identifier)).toEqual(["ENG-123"]);
   });
 
+  it("searches by bare ticket number in addition to title", async () => {
+    const result = await withLinearServer(
+      (request, response) => {
+        expect(request.body.variables).toEqual({
+          filter: { or: [{ title: { containsIgnoreCase: "123" } }, { number: { eq: 123 } }] },
+        });
+        sendJson(response, { data: { issues: { nodes: [issue] } } });
+      },
+      async (endpoint) => {
+        const linear = createLinearClient({ apiKey: "lin_api_test", endpoint });
+        return linear.search("123");
+      },
+    );
+
+    expect(result.map((item) => item.identifier)).toEqual(["ENG-123"]);
+  });
+
+  it("falls back to title-only search for a query too long to be a valid Int", async () => {
+    const result = await withLinearServer(
+      (request, response) => {
+        expect(request.body.variables).toEqual({
+          filter: { title: { containsIgnoreCase: "9999999999" } },
+        });
+        sendJson(response, { data: { issues: { nodes: [issue] } } });
+      },
+      async (endpoint) => {
+        const linear = createLinearClient({ apiKey: "lin_api_test", endpoint });
+        return linear.search("9999999999");
+      },
+    );
+
+    expect(result.map((item) => item.identifier)).toEqual(["ENG-123"]);
+  });
+
   it("lists the viewer's assigned issues", async () => {
     const result = await withLinearServer(
       (_request, response) => sendJson(response, { data: { viewer: { assignedIssues: { nodes: [issue] } } } }),

@@ -86,6 +86,7 @@ const MY_ISSUES_QUERY = `
 `;
 
 const LINEAR_IDENTIFIER = /^[A-Z][A-Z0-9]+-\d+$/i;
+const NUMERIC_QUERY = /^\d{1,9}$/;
 
 export class LinearApiError extends Error {
   constructor(message: string) {
@@ -275,7 +276,12 @@ export function createLinearClient(options: LinearClientOptions): LinearClient {
   }
 
   async function searchTitles(query: string): Promise<z.infer<typeof LinearIssueSchema>[]> {
-    const filter = query ? { title: { containsIgnoreCase: query } } : null;
+    let filter: Record<string, unknown> | null = null;
+    if (NUMERIC_QUERY.test(query)) {
+      filter = { or: [{ title: { containsIgnoreCase: query } }, { number: { eq: Number(query) } }] };
+    } else if (query) {
+      filter = { title: { containsIgnoreCase: query } };
+    }
     const response = IssueSearchResponseSchema.parse(
       await graphql({ query: SEARCH_ISSUES_QUERY, variables: { filter } }),
     );
