@@ -5,6 +5,6 @@ import type { myIssuesRpc } from "../shared/myIssues";
 
 export async function listMyIssues(_input: RpcInput<typeof myIssuesRpc>) {
   const linear = createLinearClient({ apiKey: await getApiKey() });
-  const issues = await linear.myIssues();
-  return { items: issues.map(toIssueSummary) };
+  const [issues, statuses] = await Promise.all([linear.myIssues(), linear.openStatuses().catch((): string[] => [])]);
+  return { items: issues.map(toIssueSummary), statuses };
 }

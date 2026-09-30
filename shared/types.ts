@@ -54,6 +54,7 @@ export const IssueSummarySchema = z.object({
   identifier: z.string(),
   title: z.string(),
   subtitle: z.string().optional(),
+  project: z.string().nullish(),
   status: z.string(),
   url: z.string().url(),
   text: z.string(),

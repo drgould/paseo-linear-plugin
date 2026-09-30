@@ -142,6 +142,29 @@ describe("createLinearClient", () => {
     expect(result).toEqual([issue]);
   });
 
+  it("lists open workflow states by type then position, deduped, unknown types last", async () => {
+    const result = await withLinearServer(
+      (_request, response) =>
+        sendJson(response, {
+          data: {
+            workflowStates: {
+              nodes: [
+                { name: "Weird", type: "future", position: 0 },
+                { name: "In Progress", type: "started", position: 1 },
+                { name: "Todo", type: "unstarted", position: 0 },
+                { name: "Triage", type: "triage", position: 0 },
+                { name: "Todo", type: "unstarted", position: 0 },
+                { name: "Backlog", type: "backlog", position: 0 },
+              ],
+            },
+          },
+        }),
+      async (endpoint) => createLinearClient({ apiKey: "lin_api_test", endpoint }).openStatuses(),
+    );
+
+    expect(result).toEqual(["Triage", "Backlog", "Todo", "In Progress", "Weird"]);
+  });
+
   it("returns null from getIssue when Linear has no match", async () => {
     const result = await withLinearServer(
       (_request, response) => sendJson(response, { data: { issue: null } }),
@@ -178,6 +201,7 @@ describe("toIssueSummary", () => {
       identifier: "ENG-123",
       title: "Plugin attachments",
       subtitle: "◐ In Progress",
+      project: "Paseo",
       status: "In Progress",
       url: issue.url,
       resourceType: "issue",

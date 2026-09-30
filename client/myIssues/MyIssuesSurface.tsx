@@ -84,13 +84,6 @@ function useOpenWorkspaceIdsByIssueId(enabled: boolean, issues: IssueSummary[]) 
   }, [agentsData, workspacesData, issueIdByPrKey, issueIdByBranchName]);
 }
 
-const COLUMN_ORDER = ["backlog", "todo", "in progress", "in review", "needs review"];
-
-function columnRank(status: string): number {
-  const rank = COLUMN_ORDER.indexOf(status.toLowerCase());
-  return rank === -1 ? COLUMN_ORDER.length : rank;
-}
-
 function describeError(caught: unknown): string {
   return caught instanceof Error ? caught.message : "Could not create workspace.";
 }
@@ -128,9 +121,15 @@ export function MyIssuesSurface({ theme, layout, navigation }: PluginSurfaceProp
       column.push(issue);
       byStatus.set(issue.status, column);
     }
+    // Only statuses with tickets get a column, in workflow order (unknown statuses last).
+    const order = data?.statuses ?? [];
+    const rank = (status: string) => {
+      const index = order.indexOf(status);
+      return index === -1 ? order.length : index;
+    };
     return Array.from(byStatus.entries())
       .map(([status, items]) => ({ status, items }))
-      .sort((a, b) => columnRank(a.status) - columnRank(b.status));
+      .sort((a, b) => rank(a.status) - rank(b.status));
   }, [data]);
   const [picker, setPicker] = useState<PickerState>(null);
   const [startingId, setStartingId] = useState<string | null>(null);
@@ -265,7 +264,10 @@ export function MyIssuesSurface({ theme, layout, navigation }: PluginSurfaceProp
         onPress={() => setSelectedIssueId(issue.id)}
       >
         <Text style={styles.title}>{issue.title}</Text>
-        <Text style={styles.subtitle}>{issue.identifier}</Text>
+        <Text style={styles.subtitle}>
+          {issue.identifier}
+          {issue.project ? ` · ${issue.project}` : ""}
+        </Text>
         {issue.prs.map((pr) => (
           <Pressable
             key={pr.url}
