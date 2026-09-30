@@ -1,8 +1,8 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { searchIssuesRpc } from "./shared/issues";
 import { searchIssues } from "./server/issues";
-import { hasApiKeyRpc, saveApiKeyRpc, getDefaultProfileRpc, saveDefaultProfileRpc } from "./shared/settings";
-import { hasApiKey, saveApiKey, getDefaultProfile, saveDefaultProfile } from "./server/settings";
+import { hasApiKeyRpc, saveApiKeyRpc, getDefaultProfileRpc, saveDefaultProfileRpc, getLastWorkspaceSettingsRpc, saveLastWorkspaceSettingsRpc } from "./shared/settings";
+import { hasApiKey, saveApiKey, getDefaultProfile, saveDefaultProfile, getLastWorkspaceSettings, saveLastWorkspaceSettings } from "./server/settings";
 import { getIssueDetail } from "./server/issueDetail";
 import { issueDetailRpc } from "./shared/issueDetail";
 import { listMyIssues } from "./server/myIssues";
@@ -20,6 +20,8 @@ export default function contribute(server: PluginServerContext) {
   server.handle(hasApiKeyRpc, hasApiKey);
   server.handle(getDefaultProfileRpc, getDefaultProfile);
   server.handle(saveDefaultProfileRpc, saveDefaultProfile);
+  server.handle(getLastWorkspaceSettingsRpc, getLastWorkspaceSettings);
+  server.handle(saveLastWorkspaceSettingsRpc, saveLastWorkspaceSettings);
   server.handle(myIssuesRpc, listMyIssues);
   server.handle(issueDetailRpc, getIssueDetail);
   server.handle(gitRemoteOwnerRpc, resolveGitRemoteOwners);

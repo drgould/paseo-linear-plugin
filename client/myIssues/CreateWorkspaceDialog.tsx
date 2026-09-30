@@ -1,12 +1,12 @@
 import type { PluginTheme, RpcInput, RpcOutput } from "@getpaseo/plugin";
 import { usePaseo } from "@getpaseo/plugin/client";
 import { SettingsInput, SettingsSection, SettingsSelect } from "@getpaseo/plugin/client/ui";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import type { branchExistsRpc } from "../../shared/branchExists";
 import type { listBranchesRpc } from "../../shared/listBranches";
-import type { getDefaultProfileRpc } from "../../shared/settings";
+import type { getDefaultProfileRpc, getLastWorkspaceSettingsRpc, saveLastWorkspaceSettingsRpc } from "../../shared/settings";
 import type { IssueSummary } from "../../shared/types";
 import {
   type BranchSourceOverride,
@@ -18,6 +18,13 @@ import {
 type FetchBranchExists = (input: RpcInput<typeof branchExistsRpc>) => Promise<RpcOutput<typeof branchExistsRpc>>;
 type FetchListBranches = (input: RpcInput<typeof listBranchesRpc>) => Promise<RpcOutput<typeof listBranchesRpc>>;
 type FetchDefaultProfile = (input: RpcInput<typeof getDefaultProfileRpc>) => Promise<RpcOutput<typeof getDefaultProfileRpc>>;
+
+type FetchLastWorkspaceSettings = (
+  input: RpcInput<typeof getLastWorkspaceSettingsRpc>,
+) => Promise<RpcOutput<typeof getLastWorkspaceSettingsRpc>>;
+type SaveLastWorkspaceSettings = (
+  input: RpcInput<typeof saveLastWorkspaceSettingsRpc>,
+) => Promise<RpcOutput<typeof saveLastWorkspaceSettingsRpc>>;
 
 const AUTO_PROFILE = "";
 const BRANCH_AUTO = "auto";
@@ -36,6 +43,8 @@ interface CreateWorkspaceDialogProps {
   fetchBranchExists: FetchBranchExists;
   fetchListBranches: FetchListBranches;
   fetchDefaultProfile: FetchDefaultProfile;
+  fetchLastWorkspaceSettings: FetchLastWorkspaceSettings;
+  saveLastWorkspaceSettings: SaveLastWorkspaceSettings;
   onCancel: () => void;
   onCreated: (workspaceId: string) => void;
 }
@@ -48,11 +57,14 @@ export function CreateWorkspaceDialog({
   fetchBranchExists,
   fetchListBranches,
   fetchDefaultProfile,
+  fetchLastWorkspaceSettings,
+  saveLastWorkspaceSettings,
   onCancel,
   onCreated,
 }: CreateWorkspaceDialogProps) {
   const paseo = usePaseo();
-  const { data: config } = useQuery({
+  const queryClient = useQueryClient();
+  const { data: config, isLoading: isConfigLoading } = useQuery({
     queryKey: ["linear", "daemonConfig"],
     queryFn: () => paseo.config.get(),
   });
@@ -61,9 +73,16 @@ export function CreateWorkspaceDialog({
     queryFn: () => fetchDefaultProfile({}),
   });
 
+  const { data: lastUsed, isLoading: isLastUsedLoading } = useQuery({
+    queryKey: ["linear", "lastWorkspaceSettings"],
+    queryFn: () => fetchLastWorkspaceSettings({}),
+    retry: false,
+  });
+
   const [projectId, setProjectId] = useState(projects[0]?.projectId ?? "");
   const [profileId, setProfileId] = useState(AUTO_PROFILE);
   const [profileTouched, setProfileTouched] = useState(false);
+  const [projectTouched, setProjectTouched] = useState(false);
   const [branchMode, setBranchMode] = useState(BRANCH_NEW);
   const [branchModeTouched, setBranchModeTouched] = useState(false);
   const [branchSearch, setBranchSearch] = useState("");
@@ -82,16 +101,31 @@ export function CreateWorkspaceDialog({
   /** Whether there's actually something to "continue" — omits that option when a fresh/existing branch is the only sensible choice. */
   const hasExistingWork = !!activePr || !!branchExists?.exists;
   /** Blocks Create until the defaults it would otherwise silently submit (profile, auto branch mode) have resolved. */
-  const pendingDefaults = (!profileTouched && isDefaultProfileLoading) || (!branchModeTouched && isBranchExistsLoading);
+  const pendingDefaults = (!profileTouched && (isDefaultProfileLoading || isLastUsedLoading || (!!lastUsed?.settings?.profileId && isConfigLoading))) ||
+    (!projectTouched && isLastUsedLoading) || (!branchModeTouched && isBranchExistsLoading);
   const { data: branchList } = useQuery({
     queryKey: ["linear", "listBranches", project?.projectRootPath],
     queryFn: () => fetchListBranches({ projectRootPath: project!.projectRootPath }),
     enabled: !!project,
   });
 
+  const lastSettings = lastUsed?.settings;
+  const lastProfileId = lastSettings?.profileId ?? AUTO_PROFILE;
+  // Last-used agent beats the saved default, but only while that profile still exists.
+  const lastProfileValid =
+    !!lastSettings &&
+    (lastProfileId === AUTO_PROFILE || !!config?.config.agentProfiles?.some((entry) => entry.id === lastProfileId));
+
   useEffect(() => {
-    if (!profileTouched && defaultProfile) setProfileId(defaultProfile.profileId ?? AUTO_PROFILE);
-  }, [defaultProfile, profileTouched]);
+    if (profileTouched) return;
+    if (lastProfileValid) setProfileId(lastProfileId);
+    else if (defaultProfile) setProfileId(defaultProfile.profileId ?? AUTO_PROFILE);
+  }, [defaultProfile, profileTouched, lastProfileValid, lastProfileId]);
+
+  useEffect(() => {
+    if (projectTouched || !lastSettings) return;
+    if (projects.some((entry) => entry.projectId === lastSettings.projectId)) setProjectId(lastSettings.projectId);
+  }, [lastSettings, projects, projectTouched]);
 
   useEffect(() => {
     if (!branchModeTouched && hasExistingWork) setBranchMode(BRANCH_AUTO);
@@ -143,6 +177,7 @@ export function CreateWorkspaceDialog({
     setCreating(true);
     setError(null);
     try {
+      const selectedProfileId = profileId === AUTO_PROFILE ? null : profileId;
       const branchSource: BranchSourceOverride =
         branchMode === BRANCH_EXISTING
           ? { kind: "checkout", ref: existingBranchRef }
@@ -150,9 +185,13 @@ export function CreateWorkspaceDialog({
             ? { kind: "auto" }
             : { kind: "fresh", baseBranch: baseBranch || undefined };
       const workspaceId = await startWorkspaceForIssue(paseo, project, issue, fetchBranchExists, fetchDefaultProfile, {
-        profileId: profileId === AUTO_PROFILE ? null : profileId,
+        profileId: selectedProfileId,
         branchSource,
       });
+      const last = { projectId, profileId: selectedProfileId };
+      // Seed the cache so reopening the dialog doesn't briefly show the previous selection.
+      queryClient.setQueryData(["linear", "lastWorkspaceSettings"], { settings: last });
+      saveLastWorkspaceSettings(last).catch((caught) => console.warn("Could not save last workspace settings", caught));
       onCreated(workspaceId);
     } catch (caught) {
       setError(describeError(caught));
@@ -201,6 +240,7 @@ export function CreateWorkspaceDialog({
                 value={projectId}
                 options={projectOptions}
                 onValueChange={(value) => {
+                  setProjectTouched(true);
                   setProjectId(value);
                   setExistingBranchRef("");
                   setBaseBranch("");
