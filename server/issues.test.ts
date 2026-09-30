@@ -44,8 +44,8 @@ describe("searchIssues", () => {
     searchMock.mockReset();
   });
 
-  it("with no query, shows only the viewer's issues ranked todo > backlog > in progress", async () => {
-    // Already updatedAt-desc from Linear: in-progress-1 newer than in-progress-2, etc.
+  it("with no query, shows only the viewer's issues in Linear's most-recently-updated order, regardless of status", async () => {
+    // Already updatedAt-desc from Linear; status must not affect the order.
     myIssuesMock.mockResolvedValue([
       makeIssue("ENG-1", "In Progress"),
       makeIssue("ENG-2", "Backlog"),
@@ -56,7 +56,7 @@ describe("searchIssues", () => {
 
     const result = await searchIssues({ query: "" });
 
-    expect(result.items.map((item) => item.identifier)).toEqual(["ENG-3", "ENG-2", "ENG-1", "ENG-4", "ENG-5"]);
+    expect(result.items.map((item) => item.identifier)).toEqual(["ENG-1", "ENG-2", "ENG-3", "ENG-4", "ENG-5"]);
     expect(searchMock).not.toHaveBeenCalled();
   });
 

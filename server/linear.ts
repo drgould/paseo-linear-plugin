@@ -28,6 +28,18 @@ const ViewerAssignedIssuesResponseSchema = z.object({
   errors: z.array(LinearGraphqlErrorSchema).optional(),
 });
 
+const OpenStatusesResponseSchema = z.object({
+  data: z
+    .object({
+      workflowStates: z.object({
+        nodes: z.array(z.object({ name: z.string(), type: z.string(), position: z.number() })),
+      }),
+    })
+    .nullable()
+    .optional(),
+  errors: z.array(LinearGraphqlErrorSchema).optional(),
+});
+
 const ISSUE_REF_FIELDS = `id identifier title url state { name }`;
 
 const ISSUE_FIELDS = `
@@ -84,6 +96,16 @@ const MY_ISSUES_QUERY = `
     }
   }
 `;
+
+const OPEN_STATUSES_QUERY = `
+  query PaseoLinearOpenStatuses {
+    workflowStates(filter: { type: { nin: ["completed", "canceled", "duplicate"] } }, first: 250) {
+      nodes { name type position }
+    }
+  }
+`;
+
+const OPEN_STATE_TYPE_ORDER = ["triage", "backlog", "unstarted", "started"];
 
 const LINEAR_IDENTIFIER = /^[A-Z][A-Z0-9]+-\d+$/i;
 const NUMERIC_QUERY = /^\d{1,9}$/;
@@ -170,6 +192,7 @@ export function toIssueSummary(issue: z.infer<typeof LinearIssueSchema>): IssueS
     identifier: issue.identifier,
     title: issue.title,
     subtitle: issueStatusLabel(issue),
+    project: issue.project?.name ?? null,
     status: issue.state.name,
     url: issue.url,
     text: issueText(issue),
@@ -234,6 +257,8 @@ function throwGraphqlErrors(errors: Array<{ message: string }> | undefined): voi
 export interface LinearClient {
   search(query: string): Promise<z.infer<typeof LinearIssueSchema>[]>;
   myIssues(): Promise<z.infer<typeof LinearIssueSchema>[]>;
+  /** Names of every non-completed/canceled workflow state across teams, board-ordered (triage first). */
+  openStatuses(): Promise<string[]>;
   getIssue(id: string): Promise<z.infer<typeof LinearIssueSchema> | null>;
 }
 
@@ -303,6 +328,20 @@ export function createLinearClient(options: LinearClientOptions): LinearClient {
       throwGraphqlErrors(response.errors);
       if (!response.data) throw new LinearApiError("Linear returned no issue data");
       return response.data.viewer.assignedIssues.nodes;
+    },
+    async openStatuses() {
+      const response = OpenStatusesResponseSchema.parse(await graphql({ query: OPEN_STATUSES_QUERY, variables: {} }));
+      throwGraphqlErrors(response.errors);
+      if (!response.data) throw new LinearApiError("Linear returned no workflow state data");
+      const typeRank = (type: string) => {
+        const index = OPEN_STATE_TYPE_ORDER.indexOf(type);
+        return index === -1 ? OPEN_STATE_TYPE_ORDER.length : index;
+      };
+      // ponytail: first 250 states only, same-named states across teams keep the first-sorted position; paginate if a workspace outgrows it
+      const sorted = [...response.data.workflowStates.nodes].sort(
+        (a, b) => typeRank(a.type) - typeRank(b.type) || a.position - b.position,
+      );
+      return Array.from(new Set(sorted.map((state) => state.name)));
     },
     async getIssue(id: string) {
       const issues = await findExact(id, ISSUE_DETAIL_FIELDS);

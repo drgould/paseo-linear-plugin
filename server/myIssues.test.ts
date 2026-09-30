@@ -42,14 +42,29 @@ describe("listMyIssues", () => {
   });
 
   it("maps the viewer's assigned issues through toIssueSummary", async () => {
-    global.fetch = vi.fn(async () => ({
+    global.fetch = vi.fn(async (_url: unknown, init: { body: string }) => ({
       ok: true,
       status: 200,
-      json: async () => ({ data: { viewer: { assignedIssues: { nodes: [issue] } } } }),
+      json: async () =>
+        init.body.includes("workflowStates")
+          ? {
+              data: {
+                workflowStates: {
+                  nodes: [
+                    { name: "In Progress", type: "started", position: 1 },
+                    { name: "Todo", type: "unstarted", position: 0 },
+                    { name: "Triage", type: "triage", position: 0 },
+                    { name: "Backlog", type: "backlog", position: 0 },
+                    { name: "Todo", type: "unstarted", position: 0 },
+                  ],
+                },
+              },
+            }
+          : { data: { viewer: { assignedIssues: { nodes: [issue] } } } },
     })) as unknown as typeof fetch;
 
     const result = await listMyIssues({});
 
-    expect(result).toEqual({ items: [toIssueSummary(issue)] });
+    expect(result).toEqual({ items: [toIssueSummary(issue)], statuses: ["Triage", "Backlog", "Todo", "In Progress"] });
   });
 });
