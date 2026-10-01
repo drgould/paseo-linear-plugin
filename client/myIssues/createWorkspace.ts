@@ -4,6 +4,7 @@ import type { branchExistsRpc } from "../../shared/branchExists";
 import type { gitRemoteOwnerRpc } from "../../shared/gitRemote";
 import { parseGitHubSlug } from "../../shared/gitRemote";
 import { issueAttachments } from "../../shared/issues";
+import { renderPromptTemplate } from "../../shared/promptTemplate";
 import type { getDefaultProfileRpc } from "../../shared/settings";
 import type { IssueSummary } from "../../shared/types";
 
@@ -181,6 +182,10 @@ export interface WorkspaceOverrides {
   /** `null` means "Auto" (first available provider); omit entirely to use the saved default profile. */
   profileId?: string | null;
   branchSource?: BranchSourceOverride;
+  /** Launch prompt with `{{identifier}}`/`{{title}}`/`{{url}}` placeholders; omitted or blank uses the default. */
+  promptTemplate?: string | null;
+  /** Called after the workspace exists (moves the ticket to In Progress); failures never block the workspace. */
+  onWorkspaceCreated?: (issue: IssueSummary) => Promise<unknown>;
 }
 
 export async function startWorkspaceForIssue(
@@ -205,9 +210,10 @@ export async function startWorkspaceForIssue(
   });
   await workspace.agents.create({
     config,
-    prompt: `Work on ${issue.identifier}: ${issue.title}`,
+    prompt: renderPromptTemplate(overrides?.promptTemplate, issue),
     attachments: activePr ? [buildIssueAttachment(issue), buildPrAttachment(activePr)] : [buildIssueAttachment(issue)],
     labels: { linearIssueId: issue.id },
   });
+  await overrides?.onWorkspaceCreated?.(issue).catch(() => undefined);
   return workspace.id;
 }

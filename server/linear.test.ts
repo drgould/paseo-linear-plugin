@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { describe, expect, it } from "vitest";
-import { createLinearClient, toIssueDetail, toIssueSummary } from "./linear";
+import { createLinearClient, resolveStartedState, toIssueDetail, toIssueSummary } from "./linear";
 import type { LinearIssue } from "../shared/types";
 
 const issue: LinearIssue = {
@@ -142,6 +142,136 @@ describe("createLinearClient", () => {
     expect(result).toEqual([issue]);
   });
 
+  it("filters assigned issues by closed states", async () => {
+    const filters: unknown[] = [];
+    const run = (options: Parameters<ReturnType<typeof createLinearClient>["myIssues"]>[0]) =>
+      withLinearServer(
+        (request, response) => {
+          filters.push(request.body.variables.filter);
+          sendJson(response, { data: { viewer: { assignedIssues: { nodes: [] } } } });
+        },
+        async (endpoint) => createLinearClient({ apiKey: "lin_api_test", endpoint }).myIssues(options),
+      );
+
+    await run({});
+    await run({ showClosed: true });
+
+    expect(filters).toEqual([{ state: { type: { nin: ["completed", "canceled", "duplicate"] } } }, {}]);
+  });
+
+  it("includes closed workflow states last when showClosed is set", async () => {
+    const result = await withLinearServer(
+      (request, response) => {
+        expect(request.body.variables).toEqual({ filter: null });
+        sendJson(response, {
+          data: {
+            workflowStates: {
+              nodes: [
+                { name: "Done", type: "completed", position: 0 },
+                { name: "Todo", type: "unstarted", position: 0 },
+              ],
+            },
+          },
+        });
+      },
+      async (endpoint) => createLinearClient({ apiKey: "lin_api_test", endpoint }).openStatuses({ showClosed: true }),
+    );
+
+    expect(result).toEqual(["Todo", "Done"]);
+  });
+
+  it("caps the board query at 50 issues, which the blocker fan-out is sized for", async () => {
+    let query = "";
+    await withLinearServer(
+      (request, response) => {
+        query = request.body.query;
+        sendJson(response, { data: { viewer: { assignedIssues: { nodes: [] } } } });
+      },
+      async (endpoint) => createLinearClient({ apiKey: "lin_api_test", endpoint }).myIssues(),
+    );
+
+    expect(query).toContain("assignedIssues(first: 50");
+  });
+
+  it("startIssue fails when Linear reports the update did not succeed", async () => {
+    await expect(
+      withLinearServer(
+        (request, response) => {
+          sendJson(
+            response,
+            request.body.query.includes("issueUpdate")
+              ? { data: { issueUpdate: { success: false } } }
+              : {
+                  data: {
+                    issue: {
+                      state: { type: "backlog" },
+                      team: { states: { nodes: [{ id: "s", name: "In Progress", type: "started", position: 1 }] } },
+                    },
+                  },
+                },
+          );
+        },
+        async (endpoint) => createLinearClient({ apiKey: "lin_api_test", endpoint }).startIssue("issue-uuid"),
+      ),
+    ).rejects.toThrow("Linear did not update the issue");
+  });
+
+  it("authenticate rejects when Linear returns no viewer", async () => {
+    await expect(
+      withLinearServer(
+        (_request, response) => sendJson(response, { data: null }),
+        async (endpoint) => createLinearClient({ apiKey: "lin_api_test", endpoint }).authenticate(),
+      ),
+    ).rejects.toThrow("Linear did not confirm this API key");
+  });
+
+  it("startIssue moves a todo issue to the team's In Progress state", async () => {
+    const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
+    await withLinearServer(
+      (request, response) => {
+        calls.push(request.body);
+        sendJson(
+          response,
+          request.body.query.includes("issueUpdate")
+            ? { data: { issueUpdate: { success: true } } }
+            : {
+                data: {
+                  issue: {
+                    state: { type: "unstarted" },
+                    team: {
+                      states: {
+                        nodes: [
+                          { id: "s-todo", name: "Todo", type: "unstarted", position: 0 },
+                          { id: "s-doing", name: "In Progress", type: "started", position: 1 },
+                        ],
+                      },
+                    },
+                  },
+                },
+              },
+        );
+      },
+      async (endpoint) => createLinearClient({ apiKey: "lin_api_test", endpoint }).startIssue("issue-uuid"),
+    );
+
+    expect(calls[1].variables).toEqual({ id: "issue-uuid", stateId: "s-doing" });
+  });
+
+  it("startIssue leaves an already-started issue alone", async () => {
+    const calls: string[] = [];
+    await withLinearServer(
+      (request, response) => {
+        calls.push(request.body.query);
+        sendJson(response, {
+          data: { issue: { state: { type: "started" }, team: { states: { nodes: [] } } } },
+        });
+      },
+      async (endpoint) => createLinearClient({ apiKey: "lin_api_test", endpoint }).startIssue("issue-uuid"),
+    );
+
+    expect(calls).toHaveLength(1);
+  });
+
   it("lists open workflow states by type then position, deduped, unknown types last", async () => {
     const result = await withLinearServer(
       (_request, response) =>
@@ -194,6 +324,49 @@ describe("createLinearClient", () => {
   });
 });
 
+describe("toIssueSummary blockers", () => {
+  const blocker = (identifier: string, type: string) => ({
+    id: `${identifier}-id`,
+    identifier,
+    title: `${identifier} title`,
+    url: `https://linear.app/acme/issue/${identifier}`,
+    branchName: `derek/${identifier.toLowerCase()}`,
+    state: { name: "State", type },
+  });
+
+  it("lists open blocking relations and drops closed or non-blocking ones", () => {
+    const summary = toIssueSummary({
+      ...issue,
+      blocksRelations: {
+        nodes: [
+          { type: "blocks", relatedIssue: blocker("ENG-2", "unstarted") },
+          { type: "blocks", relatedIssue: blocker("ENG-3", "completed") },
+          { type: "related", relatedIssue: blocker("ENG-4", "started") },
+        ],
+      },
+      blockedByRelations: {
+        nodes: [
+          { type: "blocks", issue: blocker("ENG-9", "started") },
+          { type: "blocks", issue: blocker("ENG-8", "canceled") },
+        ],
+      },
+    });
+
+    expect(summary.blocks).toEqual([
+      {
+        id: "ENG-2-id",
+        identifier: "ENG-2",
+        title: "ENG-2 title",
+        url: "https://linear.app/acme/issue/ENG-2",
+        branchName: "derek/eng-2",
+        status: "State",
+        stateType: "unstarted",
+      },
+    ]);
+    expect(summary.blockedBy.map((item) => item.identifier)).toEqual(["ENG-9"]);
+  });
+});
+
 describe("toIssueSummary", () => {
   it("formats the subtitle and agent-facing text snapshot", () => {
     expect(toIssueSummary(issue)).toEqual({
@@ -203,6 +376,15 @@ describe("toIssueSummary", () => {
       subtitle: "◐ In Progress",
       project: "Paseo",
       status: "In Progress",
+      stateType: "started",
+      priority: "High",
+      labels: ["Feature"],
+      dueDate: null,
+      estimate: null,
+      createdAt: undefined,
+      updatedAt: undefined,
+      blocks: [],
+      blockedBy: [],
       url: issue.url,
       resourceType: "issue",
       branchName: issue.branchName,
@@ -431,5 +613,30 @@ describe("toIssueDetail", () => {
         ],
       }),
     );
+  });
+});
+
+describe("resolveStartedState", () => {
+  const states = [
+    { id: "a", name: "Doing", type: "started", position: 2 },
+    { id: "b", name: "Review", type: "started", position: 1 },
+    { id: "c", name: "Todo", type: "unstarted", position: 0 },
+  ];
+
+  it("prefers a state named In Progress", () => {
+    expect(resolveStartedState([...states, { id: "d", name: "in progress", type: "started", position: 9 }])?.id).toBe("d");
+  });
+
+  it("ignores a state named In Progress that is not a started state", () => {
+    const misnamed = { id: "e", name: "In Progress", type: "completed", position: 0 };
+    expect(resolveStartedState([misnamed, ...states])?.id).toBe("b");
+  });
+
+  it("falls back to the lowest-position started state", () => {
+    expect(resolveStartedState(states)?.id).toBe("b");
+  });
+
+  it("returns null when the team has no started state", () => {
+    expect(resolveStartedState([states[2]])).toBeNull();
   });
 });

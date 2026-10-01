@@ -2,9 +2,15 @@ import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { RpcInput } from "@getpaseo/plugin";
-import type { saveApiKeyRpc, saveDefaultProfileRpc } from "../shared/settings";
+import {
+  type PluginSettings,
+  type saveApiKeyRpc,
+  type saveDefaultProfileRpc,
+  type saveSettingsRpc,
+} from "../shared/settings";
+import { createLinearClient } from "./linear";
 
-interface StoredSettings {
+interface StoredSettings extends Partial<PluginSettings> {
   apiKey?: string;
   defaultProfileId?: string | null;
 }
@@ -33,10 +39,59 @@ async function readSettings(): Promise<StoredSettings> {
   }
 }
 
+let writeQueue: Promise<unknown> = Promise.resolve();
+
+/**
+ * Read-modify-write under a queue, so overlapping saves (the board's debounced view state and a settings toggle)
+ * can't each start from the same snapshot and drop the other's field.
+ */
+function mutateSettings(update: (current: StoredSettings) => StoredSettings): Promise<void> {
+  const run = writeQueue.then(async () => {
+    const next = update(await readSettings());
+    await fs.mkdir(pluginDataDir(), { recursive: true, mode: 0o700 });
+    await fs.writeFile(settingsFilePath(), JSON.stringify(next), { mode: 0o600 });
+  });
+  writeQueue = run.catch(() => undefined);
+  return run;
+}
+
 async function writeSettings(patch: StoredSettings): Promise<void> {
-  const current = await readSettings();
-  await fs.mkdir(pluginDataDir(), { recursive: true, mode: 0o700 });
-  await fs.writeFile(settingsFilePath(), JSON.stringify({ ...current, ...patch }), { mode: 0o600 });
+  await mutateSettings((current) => ({ ...current, ...patch }));
+}
+
+/** Validates the key against Linear before saving, so a typo surfaces here instead of as an empty board. */
+export async function connectApiKey({ apiKey }: RpcInput<typeof saveApiKeyRpc>): Promise<{ ok: boolean }> {
+  const trimmed = apiKey.trim();
+  await createLinearClient({ apiKey: trimmed }).authenticate();
+  return saveApiKey({ apiKey: trimmed });
+}
+
+export async function disconnect(): Promise<{ ok: boolean }> {
+  await mutateSettings(({ apiKey: _removed, ...rest }) => rest);
+  return { ok: true };
+}
+
+export async function getConnection(): Promise<{ connected: boolean; source: "environment" | "saved" | "none" }> {
+  if ((await readSettings()).apiKey) return { connected: true, source: "saved" };
+  if (process.env.LINEAR_API_KEY?.trim()) return { connected: true, source: "environment" };
+  return { connected: false, source: "none" };
+}
+
+export async function getSettings(): Promise<PluginSettings> {
+  const stored = await readSettings();
+  return {
+    showClosed: stored.showClosed ?? false,
+    markInProgress: stored.markInProgress ?? false,
+    promptTemplate: stored.promptTemplate ?? null,
+    ui: stored.ui ?? {},
+  };
+}
+
+export async function saveSettings(patch: RpcInput<typeof saveSettingsRpc>): Promise<PluginSettings> {
+  const { ui, ...rest } = patch;
+  // `ui` is merged field-by-field so saving the panel width doesn't drop the filters, and vice versa.
+  await mutateSettings((current) => ({ ...current, ...rest, ...(ui ? { ui: { ...current.ui, ...ui } } : {}) }));
+  return getSettings();
 }
 
 export async function saveApiKey({ apiKey }: RpcInput<typeof saveApiKeyRpc>): Promise<{ ok: boolean }> {

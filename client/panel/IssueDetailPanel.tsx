@@ -2,8 +2,9 @@ import type { PluginAgentPanelProps, PluginClientContext } from "@getpaseo/plugi
 import { useAgent, useRpc } from "@getpaseo/plugin/client";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
-import { Linking, Pressable, Text, View } from "react-native";
+import { Linking, Text, View } from "react-native";
 import { issueDetailRpc } from "../../shared/issueDetail";
+import { Press } from "../myIssues/ui";
 
 function IssueDetailPanel({ theme, layout, agentId }: PluginAgentPanelProps) {
   const linearIssueId = useAgent(agentId, (agent) => agent.labels.linearIssueId || null);
@@ -68,9 +69,9 @@ function IssueDetailPanel({ theme, layout, agentId }: PluginAgentPanelProps) {
         <Text style={styles.label}>Assignee</Text>
         <Text style={styles.value}>{issue.assignee ?? "Unassigned"}</Text>
       </View>
-      <Pressable accessibilityRole="link" onPress={() => Linking.openURL(issue.url)}>
+      <Press accessibilityRole="link" onPress={() => Linking.openURL(issue.url)}>
         <Text style={styles.link}>{issue.url}</Text>
-      </Pressable>
+      </Press>
     </View>
   );
 }

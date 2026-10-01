@@ -1,12 +1,13 @@
 import type { PluginTheme, RpcInput, RpcOutput } from "@getpaseo/plugin";
-import { usePaseo } from "@getpaseo/plugin/client";
+import { usePaseo, useRpc } from "@getpaseo/plugin/client";
 import { SettingsInput, SettingsSection, SettingsSelect } from "@getpaseo/plugin/client/ui";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
+import { Press } from "./ui";
 import type { branchExistsRpc } from "../../shared/branchExists";
 import type { listBranchesRpc } from "../../shared/listBranches";
-import type { getDefaultProfileRpc } from "../../shared/settings";
+import { type getDefaultProfileRpc, getSettingsRpc, startIssueRpc } from "../../shared/settings";
 import type { IssueSummary } from "../../shared/types";
 import {
   type BranchSourceOverride,
@@ -37,10 +38,11 @@ interface CreateWorkspaceDialogProps {
   fetchListBranches: FetchListBranches;
   fetchDefaultProfile: FetchDefaultProfile;
   onCancel: () => void;
-  onCreated: (workspaceId: string) => void;
+  /** `warning` is set when the workspace was created but moving the ticket to In Progress failed. */
+  onCreated: (workspaceId: string, warning?: string) => void;
 }
 
-/** Mirrors Paseo's native "new workspace" dialog (repo, agent profile, branch source) minus the prompt input — the prompt is fixed to the issue title, same as `startWorkspaceForIssue`'s default. */
+/** Mirrors Paseo's native "new workspace" dialog (repo, agent profile, branch source) minus the prompt input — the prompt comes from the launch prompt template setting. */
 export function CreateWorkspaceDialog({
   theme,
   issue,
@@ -55,6 +57,12 @@ export function CreateWorkspaceDialog({
   const { data: config } = useQuery({
     queryKey: ["linear", "daemonConfig"],
     queryFn: () => paseo.config.get(),
+  });
+  const fetchSettings = useRpc(getSettingsRpc);
+  const startIssue = useRpc(startIssueRpc);
+  const { data: settings, isLoading: isSettingsLoading } = useQuery({
+    queryKey: ["linear", "settings"],
+    queryFn: () => fetchSettings({}),
   });
   const { data: defaultProfile, isLoading: isDefaultProfileLoading } = useQuery({
     queryKey: ["linear", "defaultProfile"],
@@ -82,7 +90,9 @@ export function CreateWorkspaceDialog({
   /** Whether there's actually something to "continue" — omits that option when a fresh/existing branch is the only sensible choice. */
   const hasExistingWork = !!activePr || !!branchExists?.exists;
   /** Blocks Create until the defaults it would otherwise silently submit (profile, auto branch mode) have resolved. */
-  const pendingDefaults = (!profileTouched && isDefaultProfileLoading) || (!branchModeTouched && isBranchExistsLoading);
+  // Settings carry the launch prompt and Mark In Progress, so creating before they load would silently skip both.
+  const pendingDefaults =
+    (!profileTouched && isDefaultProfileLoading) || (!branchModeTouched && isBranchExistsLoading) || isSettingsLoading;
   const { data: branchList } = useQuery({
     queryKey: ["linear", "listBranches", project?.projectRootPath],
     queryFn: () => fetchListBranches({ projectRootPath: project!.projectRootPath }),
@@ -142,6 +152,7 @@ export function CreateWorkspaceDialog({
     if (branchMode === BRANCH_EXISTING && !existingBranchRef) return;
     setCreating(true);
     setError(null);
+    let startWarning: string | undefined;
     try {
       const branchSource: BranchSourceOverride =
         branchMode === BRANCH_EXISTING
@@ -152,8 +163,19 @@ export function CreateWorkspaceDialog({
       const workspaceId = await startWorkspaceForIssue(paseo, project, issue, fetchBranchExists, fetchDefaultProfile, {
         profileId: profileId === AUTO_PROFILE ? null : profileId,
         branchSource,
+        promptTemplate: settings?.promptTemplate,
+        onWorkspaceCreated: settings?.markInProgress
+          ? async (target) => {
+              try {
+                await startIssue({ id: target.id });
+              } catch (caught) {
+                const reason = caught instanceof Error ? caught.message : "unknown error";
+                startWarning = `Workspace created, but ${target.identifier} was not moved to In Progress: ${reason}`;
+              }
+            }
+          : undefined,
       });
-      onCreated(workspaceId);
+      onCreated(workspaceId, startWarning);
     } catch (caught) {
       setError(describeError(caught));
     } finally {
@@ -225,11 +247,12 @@ export function CreateWorkspaceDialog({
               <SettingsInput label="Search branches" placeholder="Filter by name" onChangeText={setBranchSearch} />
               <ScrollView style={{ maxHeight: 180 }}>
                 {existingBranchOptions.map((option) => (
-                  <Pressable
+                  <Press
                     key={option.value}
                     accessibilityRole="button"
                     accessibilityLabel={`Check out branch ${option.label}`}
                     onPress={() => setExistingBranchRef(option.value)}
+                    hoverStyle={{ backgroundColor: theme.colors.surface2 }}
                     style={{
                       paddingVertical: 8,
                       paddingHorizontal: 10,
@@ -244,7 +267,7 @@ export function CreateWorkspaceDialog({
                     >
                       {option.label}
                     </Text>
-                  </Pressable>
+                  </Press>
                 ))}
               </ScrollView>
             </View>
@@ -273,16 +296,17 @@ export function CreateWorkspaceDialog({
         </SettingsSection>
         {error ? <Text style={{ color: theme.colors.statusDanger, fontSize: 13 }}>{error}</Text> : null}
         <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
-          <Pressable
+          <Press
             accessibilityRole="button"
             accessibilityLabel="Cancel"
+            hoverStyle={{ backgroundColor: theme.colors.surface2 }}
             style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8 }}
             onPress={onCancel}
             disabled={creating}
           >
             <Text style={{ color: theme.colors.foregroundMuted, fontSize: 13 }}>Cancel</Text>
-          </Pressable>
-          <Pressable
+          </Press>
+          <Press
             accessibilityRole="button"
             accessibilityLabel="Create workspace"
             style={{
@@ -299,7 +323,7 @@ export function CreateWorkspaceDialog({
             <Text style={{ color: theme.colors.accentForeground, fontSize: 13 }}>
               {creating ? "Creating…" : "Create"}
             </Text>
-          </Pressable>
+          </Press>
         </View>
       </Pressable>
     </Pressable>

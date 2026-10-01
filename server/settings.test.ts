@@ -1,8 +1,19 @@
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { getApiKey, getDefaultProfile, hasApiKey, saveApiKey, saveDefaultProfile } from "./settings";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  connectApiKey,
+  disconnect,
+  getApiKey,
+  getConnection,
+  getDefaultProfile,
+  getSettings,
+  hasApiKey,
+  saveApiKey,
+  saveDefaultProfile,
+  saveSettings,
+} from "./settings";
 
 describe("plugin API key settings", () => {
   let dir: string;
@@ -70,5 +81,73 @@ describe("plugin API key settings", () => {
 
     await expect(saveDefaultProfile({ profileId: "profile-1" })).rejects.toThrow();
     expect(await fs.readFile(filePath, "utf8")).toBe("not json");
+  });
+
+  it("returns defaults when no settings are stored", async () => {
+    expect(await getSettings()).toEqual({ showClosed: false, markInProgress: false, promptTemplate: null, ui: {} });
+  });
+
+  it("merges ui patches field by field and keeps the API key", async () => {
+    await saveApiKey({ apiKey: "lin_api_saved" });
+    await saveSettings({ ui: { panelWidth: 500 } });
+    const saved = await saveSettings({ showClosed: true, ui: { status: "Todo" } });
+
+    expect(saved).toEqual({
+      showClosed: true,
+      markInProgress: false,
+      promptTemplate: null,
+      ui: { panelWidth: 500, status: "Todo" },
+    });
+    expect(await getApiKey()).toBe("lin_api_saved");
+  });
+
+  it("reports where the connection comes from", async () => {
+    expect(await getConnection()).toEqual({ connected: false, source: "none" });
+    process.env.LINEAR_API_KEY = "lin_api_env";
+    expect(await getConnection()).toEqual({ connected: true, source: "environment" });
+    await saveApiKey({ apiKey: "lin_api_saved" });
+    expect(await getConnection()).toEqual({ connected: true, source: "saved" });
+  });
+
+  it("disconnect drops only the saved key", async () => {
+    await saveApiKey({ apiKey: "lin_api_saved" });
+    await saveSettings({ markInProgress: true });
+    await disconnect();
+
+    expect(await getConnection()).toEqual({ connected: false, source: "none" });
+    expect((await getSettings()).markInProgress).toBe(true);
+  });
+
+  it("keeps both fields when saves overlap", async () => {
+    await Promise.all([saveSettings({ ui: { panelWidth: 500 } }), saveSettings({ showClosed: true, ui: { view: "list" } })]);
+
+    expect(await getSettings()).toMatchObject({ showClosed: true, ui: { panelWidth: 500, view: "list" } });
+  });
+
+  describe("connectApiKey", () => {
+    const originalFetch = global.fetch;
+    afterEach(() => {
+      global.fetch = originalFetch;
+    });
+
+    it("saves the key once Linear confirms it", async () => {
+      global.fetch = vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ data: { viewer: { id: "u1" } } }),
+      })) as unknown as typeof fetch;
+
+      await expect(connectApiKey({ apiKey: " lin_api_new " })).resolves.toEqual({ ok: true });
+      const [, init] = vi.mocked(global.fetch).mock.calls[0];
+      expect((init?.headers as Record<string, string>).Authorization).toBe("lin_api_new");
+      expect(await getApiKey()).toBe("lin_api_new");
+    });
+
+    it("does not save a key Linear rejects", async () => {
+      global.fetch = vi.fn(async () => ({ ok: false, status: 401 })) as unknown as typeof fetch;
+
+      await expect(connectApiKey({ apiKey: "lin_api_bad" })).rejects.toThrow("Linear rejected this API key");
+      expect(await getApiKey()).toBe("");
+    });
   });
 });
