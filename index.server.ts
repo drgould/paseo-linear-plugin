@@ -6,6 +6,8 @@ import {
   saveApiKeyRpc,
   getDefaultProfileRpc,
   saveDefaultProfileRpc,
+  getLastWorkspaceSettingsRpc,
+  saveLastWorkspaceSettingsRpc,
   connectionRpc,
   disconnectRpc,
   getSettingsRpc,
@@ -17,6 +19,8 @@ import {
   connectApiKey,
   getDefaultProfile,
   saveDefaultProfile,
+  getLastWorkspaceSettings,
+  saveLastWorkspaceSettings,
   getConnection,
   disconnect,
   getSettings,
@@ -45,6 +49,8 @@ export default function contribute(server: PluginServerContext) {
   server.handle(hasApiKeyRpc, hasApiKey);
   server.handle(getDefaultProfileRpc, getDefaultProfile);
   server.handle(saveDefaultProfileRpc, saveDefaultProfile);
+  server.handle(getLastWorkspaceSettingsRpc, getLastWorkspaceSettings);
+  server.handle(saveLastWorkspaceSettingsRpc, saveLastWorkspaceSettings);
   server.handle(myIssuesRpc, listMyIssues);
   server.handle(issueDetailRpc, getIssueDetail);
   server.handle(gitRemoteOwnerRpc, resolveGitRemoteOwners);

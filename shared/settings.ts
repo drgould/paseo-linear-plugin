@@ -82,3 +82,17 @@ export const startIssueRpc = defineRpc({
   input: z.object({ id: z.string() }),
   output: z.object({ ok: z.boolean() }),
 });
+
+const lastWorkspaceSettingsSchema = z.object({ projectId: z.string(), profileId: z.string().nullable() });
+
+export const saveLastWorkspaceSettingsRpc = defineRpc({
+  name: "settings.save-last-workspace",
+  input: lastWorkspaceSettingsSchema,
+  output: z.object({ ok: z.boolean() }),
+});
+
+export const getLastWorkspaceSettingsRpc = defineRpc({
+  name: "settings.get-last-workspace",
+  input: z.object({}),
+  output: z.object({ settings: lastWorkspaceSettingsSchema.nullable() }),
+});

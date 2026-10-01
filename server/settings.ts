@@ -6,6 +6,7 @@ import {
   type PluginSettings,
   type saveApiKeyRpc,
   type saveDefaultProfileRpc,
+  type saveLastWorkspaceSettingsRpc,
   type saveSettingsRpc,
 } from "../shared/settings";
 import { createLinearClient } from "./linear";
@@ -13,6 +14,7 @@ import { createLinearClient } from "./linear";
 interface StoredSettings extends Partial<PluginSettings> {
   apiKey?: string;
   defaultProfileId?: string | null;
+  lastWorkspace?: { projectId: string; profileId: string | null };
 }
 
 /** PASEO_HOME is the daemon's own override for its home dir; default matches its on-disk convention. */
@@ -118,4 +120,17 @@ export async function saveDefaultProfile({
 
 export async function getDefaultProfile(): Promise<{ profileId: string | null }> {
   return { profileId: (await readSettings()).defaultProfileId ?? null };
+}
+
+export async function saveLastWorkspaceSettings(
+  lastWorkspace: RpcInput<typeof saveLastWorkspaceSettingsRpc>,
+): Promise<{ ok: boolean }> {
+  await writeSettings({ lastWorkspace });
+  return { ok: true };
+}
+
+export async function getLastWorkspaceSettings(): Promise<{
+  settings: { projectId: string; profileId: string | null } | null;
+}> {
+  return { settings: (await readSettings()).lastWorkspace ?? null };
 }

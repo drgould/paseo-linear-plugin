@@ -9,7 +9,9 @@ import {
   connectionRpc,
   getDefaultProfileRpc,
   getSettingsRpc,
+  getLastWorkspaceSettingsRpc,
   hasApiKeyRpc,
+  saveLastWorkspaceSettingsRpc,
   saveSettingsRpc,
   VIEWS,
 } from "../../shared/settings";
@@ -140,6 +142,8 @@ export function MyIssuesSurface({ theme, layout, navigation }: PluginSurfaceProp
   const fetchBranchExists = useRpc(branchExistsRpc);
   const fetchListBranches = useRpc(listBranchesRpc);
   const fetchDefaultProfile = useRpc(getDefaultProfileRpc);
+  const fetchLastWorkspaceSettings = useRpc(getLastWorkspaceSettingsRpc);
+  const saveLastWorkspaceSettings = useRpc(saveLastWorkspaceSettingsRpc);
   const fetchIssueDetail = useRpc(issueDetailRpc);
   const fetchSettings = useRpc(getSettingsRpc);
   const saveSettings = useRpc(saveSettingsRpc);
@@ -931,6 +935,8 @@ export function MyIssuesSurface({ theme, layout, navigation }: PluginSurfaceProp
           fetchBranchExists={fetchBranchExists}
           fetchListBranches={fetchListBranches}
           fetchDefaultProfile={fetchDefaultProfile}
+          fetchLastWorkspaceSettings={fetchLastWorkspaceSettings}
+          saveLastWorkspaceSettings={saveLastWorkspaceSettings}
           onCancel={() => setPicker(null)}
           onCreated={(workspaceId, warning) => {
             void invalidateWorkspaceQueries();

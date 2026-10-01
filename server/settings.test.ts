@@ -8,10 +8,12 @@ import {
   getApiKey,
   getConnection,
   getDefaultProfile,
+  getLastWorkspaceSettings,
   getSettings,
   hasApiKey,
   saveApiKey,
   saveDefaultProfile,
+  saveLastWorkspaceSettings,
   saveSettings,
 } from "./settings";
 
@@ -72,6 +74,20 @@ describe("plugin API key settings", () => {
     await saveDefaultProfile({ profileId: "profile-1" });
     expect(await getApiKey()).toBe("lin_api_saved");
     expect(await getDefaultProfile()).toEqual({ profileId: "profile-1" });
+  });
+
+  it("round-trips last workspace settings without clobbering other settings", async () => {
+    expect(await getLastWorkspaceSettings()).toEqual({ settings: null });
+    await saveApiKey({ apiKey: "lin_api_saved" });
+    await saveLastWorkspaceSettings({ projectId: "p1", profileId: null });
+    expect(await getLastWorkspaceSettings()).toEqual({ settings: { projectId: "p1", profileId: null } });
+    expect(await getApiKey()).toBe("lin_api_saved");
+  });
+
+  it("overwrites the previous last workspace settings", async () => {
+    await saveLastWorkspaceSettings({ projectId: "p1", profileId: "prof" });
+    await saveLastWorkspaceSettings({ projectId: "p2", profileId: null });
+    expect(await getLastWorkspaceSettings()).toEqual({ settings: { projectId: "p2", profileId: null } });
   });
 
   it("rejects a save instead of silently dropping other settings when the file is corrupted", async () => {
