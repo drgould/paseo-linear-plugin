@@ -1,5 +1,7 @@
 import { z } from "zod";
 import {
+  type Blocker,
+  BlockerRefSchema,
   type IssueDetail,
   type IssueRef,
   type IssueSummary,
@@ -54,6 +56,10 @@ const ISSUE_FIELDS = `
   assignee { name }
   project { name }
   labels { nodes { name } }
+  dueDate
+  estimate
+  createdAt
+  updatedAt
   attachments { nodes { sourceType metadata } }
 `;
 
@@ -79,6 +85,18 @@ function exactIssueQuery(fields: string): string {
   `;
 }
 
+/**
+ * Blocker badges on the board. Bounded connections with minimal fields: the board query fetches up to 50 issues,
+ * so every extra field here is multiplied by 50 against Linear's 10000 complexity cap.
+ */
+const BLOCKER_FIELDS = `id identifier title url branchName state { name type }`;
+
+const MY_ISSUE_FIELDS = `
+  ${ISSUE_FIELDS}
+  blocksRelations: relations(first: 5) { nodes { type relatedIssue { ${BLOCKER_FIELDS} } } }
+  blockedByRelations: inverseRelations(first: 5) { nodes { type issue { ${BLOCKER_FIELDS} } } }
+`;
+
 const SEARCH_ISSUES_QUERY = `
   query PaseoLinearIssues($filter: IssueFilter) {
     issues(first: 20, filter: $filter, orderBy: updatedAt) {
@@ -88,24 +106,81 @@ const SEARCH_ISSUES_QUERY = `
 `;
 
 const MY_ISSUES_QUERY = `
-  query PaseoLinearMyIssues {
+  query PaseoLinearMyIssues($filter: IssueFilter) {
     viewer {
-      assignedIssues(filter: { state: { type: { nin: ["completed", "canceled", "duplicate"] } } }, orderBy: updatedAt) {
-        nodes { ${ISSUE_FIELDS} }
+      assignedIssues(first: 50, filter: $filter, orderBy: updatedAt) {
+        nodes { ${MY_ISSUE_FIELDS} }
       }
     }
   }
 `;
 
 const OPEN_STATUSES_QUERY = `
-  query PaseoLinearOpenStatuses {
-    workflowStates(filter: { type: { nin: ["completed", "canceled", "duplicate"] } }, first: 250) {
+  query PaseoLinearOpenStatuses($filter: WorkflowStateFilter) {
+    workflowStates(filter: $filter, first: 250) {
       nodes { name type position }
     }
   }
 `;
 
-const OPEN_STATE_TYPE_ORDER = ["triage", "backlog", "unstarted", "started"];
+const CLOSED_STATE_TYPES = ["completed", "canceled", "duplicate"];
+const OPEN_STATE_TYPE_ORDER = ["triage", "backlog", "unstarted", "started", ...CLOSED_STATE_TYPES];
+
+const VIEWER_QUERY = `query PaseoLinearViewer { viewer { id } }`;
+
+const ViewerResponseSchema = z.object({
+  data: z.object({ viewer: z.object({ id: z.string() }) }).nullable().optional(),
+  errors: z.array(LinearGraphqlErrorSchema).optional(),
+});
+
+const TEAM_STATES_QUERY = `
+  query PaseoLinearTeamStates($id: String!) {
+    issue(id: $id) { id state { type } team { states { nodes { id name type position } } } }
+  }
+`;
+
+const TeamStatesResponseSchema = z.object({
+  data: z
+    .object({
+      issue: z
+        .object({
+          state: z.object({ type: z.string() }),
+          team: z.object({
+            states: z.object({
+              nodes: z.array(z.object({ id: z.string(), name: z.string(), type: z.string(), position: z.number() })),
+            }),
+          }),
+        })
+        .nullable(),
+    })
+    .nullable()
+    .optional(),
+  errors: z.array(LinearGraphqlErrorSchema).optional(),
+});
+
+const ISSUE_UPDATE_MUTATION = `
+  mutation PaseoLinearIssueUpdate($id: String!, $stateId: String!) {
+    issueUpdate(id: $id, input: { stateId: $stateId }) { success }
+  }
+`;
+
+const IssueUpdateResponseSchema = z.object({
+  data: z.object({ issueUpdate: z.object({ success: z.boolean() }) }).nullable().optional(),
+  errors: z.array(LinearGraphqlErrorSchema).optional(),
+});
+
+interface TeamState {
+  id: string;
+  name: string;
+  type: string;
+  position: number;
+}
+
+/** Among `started` states, prefers one literally named "In Progress", else the lowest position. */
+export function resolveStartedState(states: TeamState[]): TeamState | null {
+  const started = states.filter((state) => state.type === "started").sort((a, b) => a.position - b.position);
+  return started.find((state) => state.name.toLowerCase() === "in progress") ?? started[0] ?? null;
+}
 
 const LINEAR_IDENTIFIER = /^[A-Z][A-Z0-9]+-\d+$/i;
 const NUMERIC_QUERY = /^\d{1,9}$/;
@@ -171,6 +246,23 @@ function toIssuePrs(issue: z.infer<typeof LinearIssueSchema>): IssueSummary["prs
   return prs;
 }
 
+/** A blocker that is already closed no longer blocks anything. */
+function openBlockers(
+  nodes: Array<{ type: string; issue: z.infer<typeof BlockerRefSchema> }>,
+): Blocker[] {
+  return nodes
+    .filter((node) => node.type === "blocks" && !CLOSED_STATE_TYPES.includes(node.issue.state.type))
+    .map(({ issue }) => ({
+      id: issue.id,
+      identifier: issue.identifier,
+      title: issue.title,
+      url: issue.url,
+      branchName: issue.branchName,
+      status: issue.state.name,
+      stateType: issue.state.type,
+    }));
+}
+
 function issueText(issue: z.infer<typeof LinearIssueSchema>): string {
   const labels = issue.labels.nodes.map((label) => label.name).join(", ");
   const lines = [
@@ -194,6 +286,17 @@ export function toIssueSummary(issue: z.infer<typeof LinearIssueSchema>): IssueS
     subtitle: issueStatusLabel(issue),
     project: issue.project?.name ?? null,
     status: issue.state.name,
+    stateType: issue.state.type,
+    priority: issue.priorityLabel,
+    labels: issue.labels.nodes.map((label) => label.name),
+    dueDate: issue.dueDate ?? null,
+    estimate: issue.estimate ?? null,
+    createdAt: issue.createdAt,
+    updatedAt: issue.updatedAt,
+    blocks: openBlockers(
+      (issue.blocksRelations?.nodes ?? []).map(({ type, relatedIssue }) => ({ type, issue: relatedIssue })),
+    ),
+    blockedBy: openBlockers(issue.blockedByRelations?.nodes ?? []),
     url: issue.url,
     text: issueText(issue),
     resourceType: "issue",
@@ -244,7 +347,7 @@ export function toIssueDetail(issue: z.infer<typeof LinearIssueSchema>): IssueDe
 }
 
 function describeHttpFailure(status: number): string {
-  if (status === 401 || status === 403) return "Linear rejected LINEAR_API_KEY";
+  if (status === 401 || status === 403) return "Linear rejected this API key";
   if (status === 429) return "Linear rate limit reached. Try again shortly";
   return `Linear API request failed with HTTP ${status}`;
 }
@@ -256,10 +359,18 @@ function throwGraphqlErrors(errors: Array<{ message: string }> | undefined): voi
 
 export interface LinearClient {
   search(query: string): Promise<z.infer<typeof LinearIssueSchema>[]>;
-  myIssues(): Promise<z.infer<typeof LinearIssueSchema>[]>;
-  /** Names of every non-completed/canceled workflow state across teams, board-ordered (triage first). */
-  openStatuses(): Promise<string[]>;
+  myIssues(options?: MyIssuesOptions): Promise<z.infer<typeof LinearIssueSchema>[]>;
+  /** Names of workflow states across teams, board-ordered (triage first); closed states only with `showClosed`. */
+  openStatuses(options?: { showClosed?: boolean }): Promise<string[]>;
+  /** Throws `LinearApiError` unless Linear accepts the key. */
+  authenticate(): Promise<void>;
+  /** Moves a not-yet-started issue to its team's started state; no-op once started/closed. */
+  startIssue(id: string): Promise<void>;
   getIssue(id: string): Promise<z.infer<typeof LinearIssueSchema> | null>;
+}
+
+export interface MyIssuesOptions {
+  showClosed?: boolean;
 }
 
 interface LinearClientOptions {
@@ -323,14 +434,21 @@ export function createLinearClient(options: LinearClientOptions): LinearClient {
       }
       return searchTitles(normalized);
     },
-    async myIssues() {
-      const response = ViewerAssignedIssuesResponseSchema.parse(await graphql({ query: MY_ISSUES_QUERY, variables: {} }));
+    async myIssues(options = {}) {
+      const filter: Record<string, unknown> = {};
+      if (!options.showClosed) filter.state = { type: { nin: CLOSED_STATE_TYPES } };
+      const response = ViewerAssignedIssuesResponseSchema.parse(
+        await graphql({ query: MY_ISSUES_QUERY, variables: { filter } }),
+      );
       throwGraphqlErrors(response.errors);
       if (!response.data) throw new LinearApiError("Linear returned no issue data");
       return response.data.viewer.assignedIssues.nodes;
     },
-    async openStatuses() {
-      const response = OpenStatusesResponseSchema.parse(await graphql({ query: OPEN_STATUSES_QUERY, variables: {} }));
+    async openStatuses(options = {}) {
+      const filter = options.showClosed ? null : { type: { nin: CLOSED_STATE_TYPES } };
+      const response = OpenStatusesResponseSchema.parse(
+        await graphql({ query: OPEN_STATUSES_QUERY, variables: { filter } }),
+      );
       throwGraphqlErrors(response.errors);
       if (!response.data) throw new LinearApiError("Linear returned no workflow state data");
       const typeRank = (type: string) => {
@@ -342,6 +460,25 @@ export function createLinearClient(options: LinearClientOptions): LinearClient {
         (a, b) => typeRank(a.type) - typeRank(b.type) || a.position - b.position,
       );
       return Array.from(new Set(sorted.map((state) => state.name)));
+    },
+    async authenticate() {
+      const response = ViewerResponseSchema.parse(await graphql({ query: VIEWER_QUERY, variables: {} }));
+      throwGraphqlErrors(response.errors);
+      if (!response.data) throw new LinearApiError("Linear did not confirm this API key");
+    },
+    async startIssue(id: string) {
+      const states = TeamStatesResponseSchema.parse(await graphql({ query: TEAM_STATES_QUERY, variables: { id } }));
+      throwGraphqlErrors(states.errors);
+      const issue = states.data?.issue;
+      if (!issue) throw new LinearApiError(`Linear issue ${id} not found`);
+      if (!["triage", "backlog", "unstarted"].includes(issue.state.type)) return;
+      const target = resolveStartedState(issue.team.states.nodes);
+      if (!target) throw new LinearApiError("No started workflow state found for this team");
+      const update = IssueUpdateResponseSchema.parse(
+        await graphql({ query: ISSUE_UPDATE_MUTATION, variables: { id, stateId: target.id } }),
+      );
+      throwGraphqlErrors(update.errors);
+      if (!update.data?.issueUpdate.success) throw new LinearApiError("Linear did not update the issue");
     },
     async getIssue(id: string) {
       const issues = await findExact(id, ISSUE_DETAIL_FIELDS);

@@ -12,6 +12,9 @@ function makeIssue(overrides: Partial<IssueSummary> = {}): IssueSummary {
     text: "text",
     resourceType: "issue",
     branchName: "derek/eng-1-do-the-thing",
+    labels: [],
+    blocks: [],
+    blockedBy: [],
     prs: [],
     ...overrides,
   };
@@ -95,6 +98,32 @@ describe("startWorkspaceForIssue", () => {
         attachments: [expect.objectContaining({ type: "text" })],
       }),
     );
+  });
+
+  it("renders the prompt template and runs onWorkspaceCreated", async () => {
+    const create = vi.fn();
+    const agentsCreate = vi.fn();
+    const onWorkspaceCreated = vi.fn().mockResolvedValue(undefined);
+    const issue = makeIssue();
+
+    await startWorkspaceForIssue(makePaseo(create, agentsCreate), project, issue, vi.fn().mockResolvedValue({ exists: false }), noProfile, {
+      promptTemplate: "Ship {{identifier}} ({{title}})",
+      onWorkspaceCreated,
+    });
+
+    expect(agentsCreate).toHaveBeenCalledWith(expect.objectContaining({ prompt: "Ship ENG-1 (Do the thing)" }));
+    expect(onWorkspaceCreated).toHaveBeenCalledWith(issue);
+  });
+
+  it("still returns the workspace when onWorkspaceCreated fails", async () => {
+    const issue = makeIssue();
+    const onWorkspaceCreated = vi.fn().mockRejectedValue(new Error("Linear down"));
+
+    await startWorkspaceForIssue(makePaseo(vi.fn(), vi.fn()), project, issue, vi.fn().mockResolvedValue({ exists: false }), noProfile, {
+      onWorkspaceCreated,
+    });
+
+    expect(onWorkspaceCreated).toHaveBeenCalled();
   });
 
   it("does not treat a non-GitHub PR (e.g. a GitLab MR) as checkout-able, falling back to branch resolution", async () => {

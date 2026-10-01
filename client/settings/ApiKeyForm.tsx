@@ -21,10 +21,10 @@ export function ApiKeyForm({ theme, onSaved }: ApiKeyFormProps) {
     setMessage(null);
     try {
       await saveApiKey({ apiKey: apiKey.trim() });
-      setMessage("Saved.");
+      setMessage("Connected.");
       onSaved?.();
-    } catch {
-      setMessage("Failed to save API key.");
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "Failed to save API key.");
     } finally {
       setSaving(false);
     }
@@ -34,7 +34,7 @@ export function ApiKeyForm({ theme, onSaved }: ApiKeyFormProps) {
     <SettingsSection title="Linear">
       <SettingsInput
         label="API key"
-        hint="Paste a Linear personal API key. Stored locally and used to search Linear issues."
+        hint="Paste a Linear personal API key. Checked with Linear, then stored privately on this Paseo host."
         placeholder="lin_api_..."
         initialValue={apiKey}
         onChangeText={setApiKey}
@@ -42,8 +42,8 @@ export function ApiKeyForm({ theme, onSaved }: ApiKeyFormProps) {
         disabled={saving}
       />
       <SettingsAction
-        label="Save API key"
-        actionLabel={saving ? "Saving…" : "Save"}
+        label="Connect Linear"
+        actionLabel={saving ? "Checking…" : "Connect"}
         onPress={handleSave}
         disabled={saving || apiKey.trim().length === 0}
       />

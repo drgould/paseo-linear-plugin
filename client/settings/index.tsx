@@ -1,11 +1,13 @@
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
-import { ApiKeyForm } from "./ApiKeyForm";
+import { BehaviorForm } from "./BehaviorForm";
+import { ConnectionForm } from "./ConnectionForm";
 import { DefaultAgentForm } from "./DefaultAgentForm";
 
 export function LinearSettings({ theme }: PluginSurfaceProps) {
   return (
     <>
-      <ApiKeyForm theme={theme} />
+      <ConnectionForm theme={theme} />
+      <BehaviorForm theme={theme} />
       <DefaultAgentForm theme={theme} />
     </>
   );

@@ -13,6 +13,29 @@ const LinearIssueRefSchema = z.object({
   state: z.object({ name: z.string() }),
 });
 
+/** Minimal issue reference for the board's blocker badges (kept tiny to fit Linear's query-complexity cap). */
+export const BlockerRefSchema = z.object({
+  id: z.string(),
+  identifier: z.string(),
+  title: z.string(),
+  url: z.string(),
+  branchName: z.string(),
+  state: z.object({ name: z.string(), type: z.string() }),
+});
+
+/** Enough of a blocking/blocked issue to list it nested under a ticket and start a workspace for it. */
+export const BlockerSchema = z.object({
+  id: z.string(),
+  identifier: z.string(),
+  title: z.string(),
+  url: z.string(),
+  branchName: z.string(),
+  status: z.string(),
+  stateType: z.string(),
+});
+
+export type Blocker = z.infer<typeof BlockerSchema>;
+
 /** Raw shape returned by Linear's GraphQL API for a single issue. */
 export const LinearIssueSchema = z.object({
   id: z.string(),
@@ -26,6 +49,13 @@ export const LinearIssueSchema = z.object({
   assignee: z.object({ name: z.string() }).nullable(),
   project: z.object({ name: z.string() }).nullable(),
   labels: z.object({ nodes: z.array(z.object({ name: z.string() })) }),
+  dueDate: z.string().nullish(),
+  estimate: z.number().nullish(),
+  createdAt: z.string().optional(),
+  updatedAt: z.string().optional(),
+  /** Issues this one blocks / is blocked by (aliases of `relations`/`inverseRelations`, list-sized). */
+  blocksRelations: z.object({ nodes: z.array(z.object({ type: z.string(), relatedIssue: BlockerRefSchema })) }).optional(),
+  blockedByRelations: z.object({ nodes: z.array(z.object({ type: z.string(), issue: BlockerRefSchema })) }).optional(),
   /** Linear's own linked-PR attachments (GitHub, GitLab, Bitbucket, ...), not a `gh`/branch-name lookup. */
   attachments: z.object({
     nodes: z.array(
@@ -56,10 +86,22 @@ export const IssueSummarySchema = z.object({
   subtitle: z.string().optional(),
   project: z.string().nullish(),
   status: z.string(),
+  /** Linear workflow-state type (backlog/unstarted/started/completed/canceled/...), drives status colour/icon. */
+  stateType: z.string().optional(),
+  priority: z.string().optional(),
+  labels: z.array(z.string()).default([]),
+  dueDate: z.string().nullish(),
+  estimate: z.number().nullish(),
+  createdAt: z.string().optional(),
+  updatedAt: z.string().optional(),
   url: z.string().url(),
   text: z.string(),
   resourceType: z.string(),
   branchName: z.string(),
+  /** Open issues this one blocks. */
+  blocks: z.array(BlockerSchema).default([]),
+  /** Open issues blocking this one. */
+  blockedBy: z.array(BlockerSchema).default([]),
   prs: z
     .array(
       z.object({

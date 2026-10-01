@@ -2,12 +2,13 @@ import type { PluginTheme, RpcInput, RpcOutput } from "@getpaseo/plugin";
 import { Icon } from "@getpaseo/plugin/client/react-native";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useRef } from "react";
-import { Linking, PanResponder, Platform, Pressable, ScrollView, Text, View, type ViewStyle } from "react-native";
+import { Linking, PanResponder, Platform, ScrollView, Text, View, type ViewStyle } from "react-native";
 import type { issueDetailRpc } from "../../shared/issueDetail";
 import type { IssueRef, IssueSummary } from "../../shared/types";
 import { MarkdownText } from "./Markdown";
 import { trackWindowDrag } from "../web";
 import { PR_INDICATOR, prColor } from "./prIndicator";
+import { Press } from "./ui";
 
 type FetchIssueDetail = (input: RpcInput<typeof issueDetailRpc>) => Promise<RpcOutput<typeof issueDetailRpc>>;
 
@@ -32,12 +33,12 @@ interface IssueSidePanelProps {
 
 function IssueRefRow({ theme, label, issue }: { theme: PluginTheme; label: string; issue: IssueRef }) {
   return (
-    <Pressable accessibilityRole="link" onPress={() => Linking.openURL(issue.url)} style={{ gap: 2 }}>
+    <Press accessibilityRole="link" onPress={() => Linking.openURL(issue.url)} style={{ gap: 2 }}>
       <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>{label}</Text>
       <Text style={{ color: theme.colors.accent, fontSize: 14 }}>
         {issue.identifier} · {issue.title}
       </Text>
-    </Pressable>
+    </Press>
   );
 }
 
@@ -153,9 +154,9 @@ export function IssueSidePanel({
               <Text style={styles.identifier}>{issue.identifier}</Text>
               <Text style={styles.title}>{issue.title}</Text>
             </View>
-            <Pressable accessibilityRole="button" accessibilityLabel="Close" onPress={onClose}>
+            <Press accessibilityRole="button" accessibilityLabel="Close" onPress={onClose}>
               <Icon name="X" size={18} color={theme.colors.foregroundMuted} />
-            </Pressable>
+            </Press>
           </View>
 
           <View style={styles.row}>
@@ -188,12 +189,12 @@ export function IssueSidePanel({
             <View style={styles.section}>
               <Text style={styles.label}>Pull requests</Text>
               {issue.prs.map((pr) => (
-                <Pressable key={pr.url} style={styles.prLink} accessibilityRole="link" onPress={() => Linking.openURL(pr.url)}>
+                <Press key={pr.url} style={styles.prLink} accessibilityRole="link" onPress={() => Linking.openURL(pr.url)}>
                   <Icon name={PR_INDICATOR[pr.state].icon} size={14} color={prColor(theme, pr.state)} />
                   <Text style={[styles.prLinkText, { color: prColor(theme, pr.state) }]}>
                     PR #{pr.number} {PR_INDICATOR[pr.state].label}
                   </Text>
-                </Pressable>
+                </Press>
               ))}
             </View>
           ) : null}
@@ -232,9 +233,9 @@ export function IssueSidePanel({
             </View>
           ) : null}
 
-          <Pressable accessibilityRole="link" onPress={() => Linking.openURL(issue.url)}>
+          <Press accessibilityRole="link" onPress={() => Linking.openURL(issue.url)}>
             <Text style={styles.link}>Open in Linear</Text>
-          </Pressable>
+          </Press>
         </ScrollView>
       </View>
     </View>
