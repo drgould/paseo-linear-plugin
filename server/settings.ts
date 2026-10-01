@@ -2,11 +2,12 @@ import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { RpcInput } from "@getpaseo/plugin";
-import type { saveApiKeyRpc, saveDefaultProfileRpc } from "../shared/settings";
+import type { saveApiKeyRpc, saveDefaultProfileRpc, saveLastWorkspaceSettingsRpc } from "../shared/settings";
 
 interface StoredSettings {
   apiKey?: string;
   defaultProfileId?: string | null;
+  lastWorkspace?: { projectId: string; profileId: string | null };
 }
 
 /** PASEO_HOME is the daemon's own override for its home dir; default matches its on-disk convention. */
@@ -63,4 +64,17 @@ export async function saveDefaultProfile({
 
 export async function getDefaultProfile(): Promise<{ profileId: string | null }> {
   return { profileId: (await readSettings()).defaultProfileId ?? null };
+}
+
+export async function saveLastWorkspaceSettings(
+  lastWorkspace: RpcInput<typeof saveLastWorkspaceSettingsRpc>,
+): Promise<{ ok: boolean }> {
+  await writeSettings({ lastWorkspace });
+  return { ok: true };
+}
+
+export async function getLastWorkspaceSettings(): Promise<{
+  settings: { projectId: string; profileId: string | null } | null;
+}> {
+  return { settings: (await readSettings()).lastWorkspace ?? null };
 }

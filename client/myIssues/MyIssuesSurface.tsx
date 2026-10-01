@@ -5,7 +5,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { Linking, type LayoutChangeEvent, Pressable, ScrollView, Text, View } from "react-native";
 import { ApiKeyForm } from "../settings/ApiKeyForm";
-import { hasApiKeyRpc, getDefaultProfileRpc } from "../../shared/settings";
+import { hasApiKeyRpc, getDefaultProfileRpc, getLastWorkspaceSettingsRpc, saveLastWorkspaceSettingsRpc } from "../../shared/settings";
 import { myIssuesRpc } from "../../shared/myIssues";
 import { gitRemoteOwnerRpc, parseGitHubSlug } from "../../shared/gitRemote";
 import { branchExistsRpc } from "../../shared/branchExists";
@@ -107,6 +107,8 @@ export function MyIssuesSurface({ theme, layout, navigation }: PluginSurfaceProp
   const fetchBranchExists = useRpc(branchExistsRpc);
   const fetchListBranches = useRpc(listBranchesRpc);
   const fetchDefaultProfile = useRpc(getDefaultProfileRpc);
+  const fetchLastWorkspaceSettings = useRpc(getLastWorkspaceSettingsRpc);
+  const saveLastWorkspaceSettings = useRpc(saveLastWorkspaceSettingsRpc);
   const fetchIssueDetail = useRpc(issueDetailRpc);
   const { data, isLoading, error } = useQuery({
     queryKey: ["linear", "myIssues"],
@@ -389,6 +391,8 @@ export function MyIssuesSurface({ theme, layout, navigation }: PluginSurfaceProp
           fetchBranchExists={fetchBranchExists}
           fetchListBranches={fetchListBranches}
           fetchDefaultProfile={fetchDefaultProfile}
+          fetchLastWorkspaceSettings={fetchLastWorkspaceSettings}
+          saveLastWorkspaceSettings={saveLastWorkspaceSettings}
           onCancel={() => setPicker(null)}
           onCreated={(workspaceId) => {
             void invalidateWorkspaceQueries();
