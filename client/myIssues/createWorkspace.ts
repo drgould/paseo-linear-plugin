@@ -182,8 +182,8 @@ export interface WorkspaceOverrides {
   /** `null` means "Auto" (first available provider); omit entirely to use the saved default profile. */
   profileId?: string | null;
   branchSource?: BranchSourceOverride;
-  /** Launch prompt with `{{identifier}}`/`{{title}}`/`{{url}}` placeholders; omitted or blank uses the default. */
-  promptTemplate?: string | null;
+  /** First message for the agent; omitted or blank renders the default template. */
+  prompt?: string;
   /** Called after the workspace exists (moves the ticket to In Progress); failures never block the workspace. */
   onWorkspaceCreated?: (issue: IssueSummary) => Promise<unknown>;
 }
@@ -210,7 +210,7 @@ export async function startWorkspaceForIssue(
   });
   await workspace.agents.create({
     config,
-    prompt: renderPromptTemplate(overrides?.promptTemplate, issue),
+    prompt: overrides?.prompt?.trim() || renderPromptTemplate(null, issue),
     attachments: activePr ? [buildIssueAttachment(issue), buildPrAttachment(activePr)] : [buildIssueAttachment(issue)],
     labels: { linearIssueId: issue.id },
   });

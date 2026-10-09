@@ -100,14 +100,14 @@ describe("startWorkspaceForIssue", () => {
     );
   });
 
-  it("renders the prompt template and runs onWorkspaceCreated", async () => {
+  it("uses the given prompt and runs onWorkspaceCreated", async () => {
     const create = vi.fn();
     const agentsCreate = vi.fn();
     const onWorkspaceCreated = vi.fn().mockResolvedValue(undefined);
     const issue = makeIssue();
 
     await startWorkspaceForIssue(makePaseo(create, agentsCreate), project, issue, vi.fn().mockResolvedValue({ exists: false }), noProfile, {
-      promptTemplate: "Ship {{identifier}} ({{title}})",
+      prompt: "Ship ENG-1 (Do the thing)",
       onWorkspaceCreated,
     });
 

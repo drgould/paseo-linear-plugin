@@ -1,9 +1,10 @@
 import type { PluginTheme, RpcInput, RpcOutput } from "@getpaseo/plugin";
 import { usePaseo, useRpc } from "@getpaseo/plugin/client";
-import { SettingsInput, SettingsSection, SettingsSelect } from "@getpaseo/plugin/client/ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { renderPromptTemplate } from "../../shared/promptTemplate";
+import { ChoicePicker } from "./ChoicePicker";
 import { Press } from "./ui";
 import type { branchExistsRpc } from "../../shared/branchExists";
 import type { listBranchesRpc } from "../../shared/listBranches";
@@ -24,7 +25,9 @@ import {
 
 type FetchBranchExists = (input: RpcInput<typeof branchExistsRpc>) => Promise<RpcOutput<typeof branchExistsRpc>>;
 type FetchListBranches = (input: RpcInput<typeof listBranchesRpc>) => Promise<RpcOutput<typeof listBranchesRpc>>;
-type FetchDefaultProfile = (input: RpcInput<typeof getDefaultProfileRpc>) => Promise<RpcOutput<typeof getDefaultProfileRpc>>;
+type FetchDefaultProfile = (
+  input: RpcInput<typeof getDefaultProfileRpc>,
+) => Promise<RpcOutput<typeof getDefaultProfileRpc>>;
 
 type FetchLastWorkspaceSettings = (
   input: RpcInput<typeof getLastWorkspaceSettingsRpc>,
@@ -37,10 +40,26 @@ const AUTO_PROFILE = "";
 const BRANCH_AUTO = "auto";
 const BRANCH_NEW = "new";
 const BRANCH_EXISTING = "existing";
-const RECENT_BRANCH_LIMIT = 10;
 
 function describeError(caught: unknown): string {
   return caught instanceof Error ? caught.message : "Could not create workspace.";
+}
+
+function Field({ label, theme, children }: { label: string; theme: PluginTheme; children: ReactNode }) {
+  return (
+    <View style={{ gap: 6 }}>
+      <Text
+        style={{
+          color: theme.colors.foregroundMuted,
+          fontSize: 12,
+          fontWeight: "600",
+        }}
+      >
+        {label}
+      </Text>
+      {children}
+    </View>
+  );
 }
 
 interface CreateWorkspaceDialogProps {
@@ -57,7 +76,7 @@ interface CreateWorkspaceDialogProps {
   onCreated: (workspaceId: string, warning?: string) => void;
 }
 
-/** Mirrors Paseo's native "new workspace" dialog (repo, agent profile, branch source) minus the prompt input — the prompt comes from the launch prompt template setting. */
+/** Mirrors Paseo's native "new workspace" dialog (project, agent profile, branch source) plus an editable prompt prefilled from the launch prompt template setting. */
 export function CreateWorkspaceDialog({
   theme,
   issue,
@@ -99,17 +118,23 @@ export function CreateWorkspaceDialog({
   const [projectTouched, setProjectTouched] = useState(false);
   const [branchMode, setBranchMode] = useState(BRANCH_NEW);
   const [branchModeTouched, setBranchModeTouched] = useState(false);
-  const [branchSearch, setBranchSearch] = useState("");
   const [existingBranchRef, setExistingBranchRef] = useState("");
   const [baseBranch, setBaseBranch] = useState("");
+  /** `null` until the user edits, so the field follows the saved template until then. */
+  const [promptDraft, setPromptDraft] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const prompt = promptDraft ?? renderPromptTemplate(settings?.promptTemplate, issue);
   const activePr = findActiveGithubPr(issue);
   const project = projects.find((entry) => entry.projectId === projectId);
   const { data: branchExists, isLoading: isBranchExistsLoading } = useQuery({
     queryKey: ["linear", "branchExists", project?.projectRootPath, issue.branchName],
-    queryFn: () => fetchBranchExists({ projectRootPath: project!.projectRootPath, branchName: issue.branchName }),
+    queryFn: () =>
+      fetchBranchExists({
+        projectRootPath: project!.projectRootPath,
+        branchName: issue.branchName,
+      }),
     enabled: !activePr && !!project,
   });
   /** Whether there's actually something to "continue" — omits that option when a fresh/existing branch is the only sensible choice. */
@@ -117,7 +142,8 @@ export function CreateWorkspaceDialog({
   /** Blocks Create until the defaults it would otherwise silently submit (profile, auto branch mode) have resolved. */
   // Settings carry the launch prompt and Mark In Progress, so creating before they load would silently skip both.
   const pendingDefaults =
-    (!profileTouched && (isDefaultProfileLoading || isLastUsedLoading || (!!lastUsed?.settings?.profileId && isConfigLoading))) ||
+    (!profileTouched &&
+      (isDefaultProfileLoading || isLastUsedLoading || (!!lastUsed?.settings?.profileId && isConfigLoading))) ||
     (!projectTouched && isLastUsedLoading) ||
     (!branchModeTouched && isBranchExistsLoading) ||
     isSettingsLoading;
@@ -150,45 +176,54 @@ export function CreateWorkspaceDialog({
   }, [hasExistingWork, branchModeTouched]);
 
   const projectOptions = useMemo(
-    () => projects.map((project) => ({ label: project.projectDisplayName, value: project.projectId })),
+    () =>
+      projects.map((project) => ({
+        label: project.projectDisplayName,
+        value: project.projectId,
+        description: project.projectRootPath,
+      })),
     [projects],
   );
   const profileOptions = useMemo(
     () => [
       { label: "Auto (first available provider)", value: AUTO_PROFILE },
-      ...(config?.config.agentProfiles ?? []).map((profile) => ({ label: profile.name, value: profile.id })),
+      ...(config?.config.agentProfiles ?? []).map((profile) => ({
+        label: profile.name,
+        value: profile.id,
+      })),
     ],
     [config],
   );
   const branchModeOptions = useMemo(() => {
     const options: { label: string; value: string }[] = [];
-    if (hasExistingWork) options.push({ label: "Continue existing branch/PR", value: BRANCH_AUTO });
+    if (hasExistingWork)
+      options.push({
+        label: "Continue existing branch/PR",
+        value: BRANCH_AUTO,
+      });
     options.push({ label: "New branch", value: BRANCH_NEW });
     options.push({ label: "Existing branch", value: BRANCH_EXISTING });
     return options;
   }, [hasExistingWork]);
-  const existingBranchOptions = useMemo(() => {
-    const eligible = (branchList?.branches ?? []).filter((b) => b.name !== issue.branchName);
-    const search = branchSearch.trim().toLowerCase();
-    const matches = search ? eligible.filter((b) => b.name.toLowerCase().includes(search)) : eligible.slice(0, RECENT_BRANCH_LIMIT);
-    const selected = eligible.find((b) => b.ref === existingBranchRef);
-    const list = selected && !matches.some((b) => b.ref === selected.ref) ? [selected, ...matches] : matches;
-    return list.map((b) => ({ label: b.name, value: b.ref }));
-  }, [branchList, issue.branchName, existingBranchRef, branchSearch]);
+  const existingBranchOptions = useMemo(
+    () =>
+      (branchList?.branches ?? [])
+        .filter((b) => b.name !== issue.branchName)
+        .map((b) => ({ label: b.name, value: b.ref })),
+    [branchList, issue.branchName],
+  );
   const baseBranchOptions = useMemo(() => {
-    const defaultLabel = branchList?.defaultBranch ? `${branchList.defaultBranch} (default)` : "Repo default";
+    const defaultName = branchList?.defaultBranch;
     return [
-      { label: defaultLabel, value: "" },
-      ...(branchList?.branches ?? []).slice(0, RECENT_BRANCH_LIMIT).map((b) => ({ label: b.name, value: b.name })),
+      {
+        label: defaultName ? `${defaultName} (default)` : "Project default",
+        value: "",
+      },
+      ...(branchList?.branches ?? [])
+        .filter((b) => b.name !== defaultName)
+        .map((b) => ({ label: b.name, value: b.name })),
     ];
   }, [branchList]);
-  const styles = useMemo(
-    () => ({
-      fieldBorder: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, overflow: "hidden" as const },
-    }),
-    [theme],
-  );
-
   async function handleCreate() {
     if (!project) return;
     if (branchMode === BRANCH_EXISTING && !existingBranchRef) return;
@@ -206,7 +241,7 @@ export function CreateWorkspaceDialog({
       const workspaceId = await startWorkspaceForIssue(paseo, project, issue, fetchBranchExists, fetchDefaultProfile, {
         profileId: selectedProfileId,
         branchSource,
-        promptTemplate: settings?.promptTemplate,
+        prompt: prompt.trim() ? prompt : renderPromptTemplate(settings?.promptTemplate, issue),
         onWorkspaceCreated: settings?.markInProgress
           ? async (target) => {
               try {
@@ -220,7 +255,9 @@ export function CreateWorkspaceDialog({
       });
       const last = { projectId, profileId: selectedProfileId };
       // Seed the cache so reopening the dialog doesn't briefly show the previous selection.
-      queryClient.setQueryData(["linear", "lastWorkspaceSettings"], { settings: last });
+      queryClient.setQueryData(["linear", "lastWorkspaceSettings"], {
+        settings: last,
+      });
       saveLastWorkspaceSettings(last).catch((caught) => console.warn("Could not save last workspace settings", caught));
       onCreated(workspaceId, startWarning);
     } catch (caught) {
@@ -249,7 +286,11 @@ export function CreateWorkspaceDialog({
     >
       <Pressable
         style={{
-          width: 460,
+          width: 560,
+          maxWidth: "95%",
+          maxHeight: "92%",
+          // Pressable defaults to the hand cursor on web; only the controls inside should show it.
+          ...({ cursor: "default" } as object),
           padding: 16,
           borderRadius: 12,
           borderWidth: 1,
@@ -259,96 +300,122 @@ export function CreateWorkspaceDialog({
         }}
         onPress={(event) => event.stopPropagation()}
       >
-        <Text style={{ color: theme.colors.foreground, fontSize: 15, fontWeight: "600" }}>
+        <Text
+          style={{
+            color: theme.colors.foreground,
+            fontSize: 15,
+            fontWeight: "600",
+          }}
+        >
           Create workspace for {issue.identifier}
         </Text>
-        <SettingsSection title="Workspace">
-          {projectOptions.length > 1 ? (
-            <View style={styles.fieldBorder}>
-              <SettingsSelect
-                label="Repo"
-                value={projectId}
-                options={projectOptions}
-                onValueChange={(value) => {
-                  setProjectTouched(true);
-                  setProjectId(value);
-                  setExistingBranchRef("");
-                  setBaseBranch("");
-                  setBranchSearch("");
-                }}
-              />
-            </View>
-          ) : null}
-          <View style={styles.fieldBorder}>
-            <SettingsSelect
-              label="Branch"
-              value={branchMode}
+        <ScrollView style={{ flexShrink: 1 }} contentContainerStyle={{ gap: 12 }}>
+          <Field label="Project" theme={theme}>
+            <ChoicePicker
+              theme={theme}
+              label="Projects"
+              icon="Folder"
+              placeholder="Choose a project"
+              options={projectOptions}
+              value={projectId}
+              onChange={(value) => {
+                setProjectTouched(true);
+                setProjectId(value);
+                setExistingBranchRef("");
+                setBaseBranch("");
+              }}
+              disabled={creating}
+            />
+          </Field>
+          <Field label="Branch" theme={theme}>
+            <ChoicePicker
+              theme={theme}
+              label="Branch source"
+              icon="GitFork"
+              placeholder="Choose a branch source"
               options={branchModeOptions}
-              onValueChange={(value) => {
+              value={branchMode}
+              onChange={(value) => {
                 setBranchModeTouched(true);
                 setBranchMode(value);
               }}
+              disabled={creating}
             />
-          </View>
-          {branchMode === BRANCH_EXISTING ? (
-            <View style={styles.fieldBorder}>
-              <SettingsInput label="Search branches" placeholder="Filter by name" onChangeText={setBranchSearch} />
-              <ScrollView style={{ maxHeight: 180 }}>
-                {existingBranchOptions.map((option) => (
-                  <Press
-                    key={option.value}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Check out branch ${option.label}`}
-                    onPress={() => setExistingBranchRef(option.value)}
-                    hoverStyle={{ backgroundColor: theme.colors.surface2 }}
-                    style={{
-                      paddingVertical: 8,
-                      paddingHorizontal: 10,
-                      backgroundColor: option.value === existingBranchRef ? theme.colors.surface0 : "transparent",
-                    }}
-                  >
-                    <Text
-                      style={{
-                        color: option.value === existingBranchRef ? theme.colors.accent : theme.colors.foreground,
-                        fontSize: 13,
-                      }}
-                    >
-                      {option.label}
-                    </Text>
-                  </Press>
-                ))}
-              </ScrollView>
-            </View>
-          ) : null}
-          {branchMode === BRANCH_NEW ? (
-            <View style={styles.fieldBorder}>
-              <SettingsSelect
-                label="Base branch"
-                value={baseBranch}
-                options={baseBranchOptions}
-                onValueChange={setBaseBranch}
+            {branchMode === BRANCH_EXISTING ? (
+              <ChoicePicker
+                theme={theme}
+                label="Branches"
+                icon="GitBranch"
+                placeholder="Choose a branch to check out"
+                options={existingBranchOptions}
+                value={existingBranchRef}
+                onChange={setExistingBranchRef}
+                disabled={creating}
               />
-            </View>
-          ) : null}
-          <View style={styles.fieldBorder}>
-            <SettingsSelect
-              label="Agent"
-              value={profileId}
+            ) : null}
+            {branchMode === BRANCH_NEW ? (
+              <ChoicePicker
+                theme={theme}
+                label="Base branches"
+                icon="GitBranch"
+                placeholder="Choose a base branch"
+                options={baseBranchOptions}
+                value={baseBranch}
+                onChange={setBaseBranch}
+                disabled={creating}
+              />
+            ) : null}
+          </Field>
+          <Field label="Agent" theme={theme}>
+            <ChoicePicker
+              theme={theme}
+              label="Agents"
+              icon="Bot"
+              placeholder="Choose an agent"
               options={profileOptions}
-              onValueChange={(value) => {
+              value={profileId}
+              onChange={(value) => {
                 setProfileTouched(true);
                 setProfileId(value);
               }}
+              disabled={creating}
             />
-          </View>
-        </SettingsSection>
+          </Field>
+          <Field label="Prompt" theme={theme}>
+            <TextInput
+              accessibilityLabel="Prompt"
+              multiline
+              value={prompt}
+              onChangeText={setPromptDraft}
+              editable={!creating}
+              placeholderTextColor={theme.colors.foregroundMuted}
+              style={{
+                minHeight: 200,
+                maxHeight: 360,
+                paddingHorizontal: 12,
+                paddingVertical: 9,
+                borderRadius: 8,
+                borderWidth: 1,
+                borderColor: theme.colors.border,
+                backgroundColor: theme.colors.surface0,
+                color: theme.colors.foreground,
+                fontSize: 13,
+                textAlignVertical: "top",
+              }}
+            />
+          </Field>
+        </ScrollView>
         {error ? <Text style={{ color: theme.colors.statusDanger, fontSize: 13 }}>{error}</Text> : null}
         <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
           <Press
             accessibilityRole="button"
             accessibilityLabel="Cancel"
             hoverStyle={{ backgroundColor: theme.colors.surface2 }}
-            style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8 }}
+            style={{
+              paddingVertical: 8,
+              paddingHorizontal: 12,
+              borderRadius: 8,
+            }}
             onPress={onCancel}
             disabled={creating}
           >

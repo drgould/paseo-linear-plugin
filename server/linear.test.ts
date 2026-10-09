@@ -386,6 +386,7 @@ describe("toIssueSummary", () => {
       blocks: [],
       blockedBy: [],
       url: issue.url,
+      description: "Let extensions attach external context.",
       resourceType: "issue",
       branchName: issue.branchName,
       prs: [],

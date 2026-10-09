@@ -96,6 +96,8 @@ export const IssueSummarySchema = z.object({
   updatedAt: z.string().optional(),
   url: z.string().url(),
   text: z.string(),
+  /** Ticket body, so the launch prompt can include it without the agent fetching the issue. */
+  description: z.string().nullish(),
   resourceType: z.string(),
   branchName: z.string(),
   /** Open issues this one blocks. */
