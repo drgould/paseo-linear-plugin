@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Linking, type LayoutChangeEvent, ScrollView, Text, TextInput, View } from "react-native";
 import { ConnectCard } from "../settings/ConnectCard";
+import { LinearSettings } from "../settings";
 import {
   connectionRpc,
   getDefaultProfileRpc,
@@ -224,6 +225,7 @@ export function MyIssuesSurface({ theme, layout, navigation }: PluginSurfaceProp
     return () => clearTimeout(timer);
   }, [status, sortField, sortDirection, panelWidth, view, hiddenColumns, saveSettings]);
   const [contentWidth, setContentWidth] = useState(0);
+  const [showSettings, setShowSettings] = useState(false);
   // Looked up live off `data` each render rather than snapshotting the clicked IssueSummary, so a
   // background refetch (e.g. window refocus) updates the open panel's status/PR list instead of
   // leaving it stuck on what the card looked like at click time.
@@ -706,6 +708,25 @@ export function MyIssuesSurface({ theme, layout, navigation }: PluginSurfaceProp
     );
   }
 
+  if (showSettings) {
+    return (
+      <View style={styles.screen}>
+        <View style={styles.header}>
+          <View>
+            <Text style={styles.headerEyebrow}>LINEAR</Text>
+            <Text style={styles.headerTitle}>Settings</Text>
+          </View>
+          <Chip colors={theme.colors} label="Back to board" leading="ArrowLeft" onPress={() => setShowSettings(false)} />
+        </View>
+        <ScrollView contentContainerStyle={{ padding: 16 }}>
+          <View style={{ gap: 16, maxWidth: 640, width: "100%", alignSelf: "center" }}>
+            <LinearSettings theme={theme} />
+          </View>
+        </ScrollView>
+      </View>
+    );
+  }
+
   // Waiting for saved view state too, so it can't overwrite a choice made before it arrives.
   if (isLoading || isSettingsLoading) {
     return (
@@ -724,6 +745,10 @@ export function MyIssuesSurface({ theme, layout, navigation }: PluginSurfaceProp
   if (error) {
     return (
       <View style={styles.screen}>
+        {/* A revoked key lands here, so settings must stay reachable to replace it. */}
+        <View style={[styles.header, { justifyContent: "flex-end" }]}>
+          <Chip colors={theme.colors} label="Settings" leading="Settings" onPress={() => setShowSettings(true)} />
+        </View>
         <EmptyState
           colors={theme.colors}
           icon="AlertCircle"
@@ -771,6 +796,7 @@ export function MyIssuesSurface({ theme, layout, navigation }: PluginSurfaceProp
             ]}
             onChange={setView}
           />
+          <Chip colors={theme.colors} label="Settings" leading="Settings" onPress={() => setShowSettings(true)} />
           <Chip
             colors={theme.colors}
             label="Refresh"

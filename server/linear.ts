@@ -299,6 +299,7 @@ export function toIssueSummary(issue: z.infer<typeof LinearIssueSchema>): IssueS
     blockedBy: openBlockers(issue.blockedByRelations?.nodes ?? []),
     url: issue.url,
     text: issueText(issue),
+    description: issue.description,
     resourceType: "issue",
     branchName: issue.branchName,
     prs: toIssuePrs(issue),
