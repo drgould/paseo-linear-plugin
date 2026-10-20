@@ -419,7 +419,7 @@ export function MyIssuesSurface({ theme, layout, navigation }: PluginSurfaceProp
     ));
   }
 
-  function renderWorkspaceButton(issue: IssueSummary, small = false) {
+  function renderWorkspaceButton(issue: IssueSummary, small = false, blocked = issue.blockedBy.length > 0) {
     const workspaceId = openWorkspaceIds.get(issue.id);
     return workspaceId ? (
       <IconButton
@@ -434,7 +434,7 @@ export function MyIssuesSurface({ theme, layout, navigation }: PluginSurfaceProp
         colors={theme.colors}
         icon={startingId === issue.id ? "Loader" : "Plus"}
         label={`Create workspace for ${issue.identifier}`}
-        primary
+        primary={!blocked}
         small={small}
         disabled={startingId === issue.id}
         onPress={() => void handleStartWorkspace(issue)}
@@ -517,7 +517,7 @@ export function MyIssuesSurface({ theme, layout, navigation }: PluginSurfaceProp
           <Text style={[styles.metaText, { flex: 1, color: theme.colors.foreground }]} numberOfLines={1}>
             {ref.title}
           </Text>
-          {renderWorkspaceButton(nested, true)}
+          {renderWorkspaceButton(nested, true, kind === "blocks" || nested.blockedBy.length > 0)}
         </View>
         {renderPickerMessage(nested)}
       </View>
@@ -670,7 +670,7 @@ export function MyIssuesSurface({ theme, layout, navigation }: PluginSurfaceProp
           <Text style={[styles.metaText, { flexShrink: 1, color: theme.colors.foreground }]} numberOfLines={1}>
             {ref.title}
           </Text>
-          {renderWorkspaceButton(nested, true)}
+          {renderWorkspaceButton(nested, true, kind === "blocks" || nested.blockedBy.length > 0)}
         </View>
         {renderPickerMessage(nested)}
       </View>
