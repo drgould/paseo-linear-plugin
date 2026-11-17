@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/drgould/paseo-linear-plugin/compare/paseo-linear-plugin-v0.1.0...paseo-linear-plugin-v0.2.0) (2026-11-17)
+
+
+### Features
+
+* add registry listing metadata and overview ([#25](https://github.com/drgould/paseo-linear-plugin/issues/25)) ([4b30900](https://github.com/drgould/paseo-linear-plugin/commit/4b3090000660a1bbef84ff63c476a27be07ce834))
+
 ## 0.1.0 (2026-10-20)
 
 
