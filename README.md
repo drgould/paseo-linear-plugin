@@ -30,4 +30,6 @@ npm test
 PRs merge by squash only, and the PR title becomes the commit message on `main` — use a
 [Conventional Commits](https://www.conventionalcommits.org/) title (`feat:`, `fix:`, `chore:`, …).
 CI lints the title and runs typecheck + tests. [release-please](https://github.com/googleapis/release-please)
-watches `main` and opens a release PR from those commits.
+watches `main` and opens a release PR from those commits. Merging the release PR publishes the
+version to npm as [`paseo-linear-plugin`](https://www.npmjs.com/package/paseo-linear-plugin), and
+the Paseo registry picks it up from there.
