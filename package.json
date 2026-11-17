@@ -1,7 +1,21 @@
 {
   "name": "paseo-linear-plugin",
-  "private": true,
   "version": "0.2.0",
+  "description": "Browse your Linear issues on a kanban board and start Paseo workspaces from them.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/drgould/paseo-linear-plugin.git"
+  },
+  "files": [
+    "paseo-plugin.json",
+    "OVERVIEW.md",
+    "index.client.tsx",
+    "index.server.ts",
+    "client/",
+    "server/",
+    "shared/",
+    "!**/*.test.ts"
+  ],
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
