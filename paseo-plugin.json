@@ -1,5 +1,6 @@
 {
   "id": "linear",
+  "description": "Browse your Linear issues on a kanban board and start Paseo workspaces from them.",
   "requirements": {
     "paseo": ">=0.8.0"
   }

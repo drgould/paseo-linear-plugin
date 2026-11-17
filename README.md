@@ -9,9 +9,15 @@ A [Paseo](https://paseo.sh) plugin for viewing Linear tickets and starting works
 
 Built against the [Paseo plugin API v0.8](https://paseo.sh/docs/plugins/v0.8).
 
-## Status
+See [OVERVIEW.md](OVERVIEW.md) for features, setup, and data access.
 
-Early scaffolding — not yet functional.
+## Install
+
+```bash
+paseo plugin add drgould/linear
+```
+
+Before the registry listing is live, install from Git: `paseo plugin add git:drgould/paseo-linear-plugin`.
 
 ## Development
 
